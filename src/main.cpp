@@ -12,7 +12,7 @@
 #include "gomoku/main.h"
 
 namespace gomoku {
-    Board::Board(int s) : size_(s), grid_(s * s, Stone::EMPTY) {
+    Board::Board(const int s) : size_(s), grid_(s * s, Stone::EMPTY) {
 
     };
 
@@ -29,7 +29,7 @@ namespace gomoku {
         return true;
     }
 
-    Stone Board::getStone(int x, int y) const {
+    Stone Board::getStone(const int x,const int y) const {
         if (x < 0 || x >= size_ || y < 0 || y >= size_)
             return Stone::EMPTY;
 

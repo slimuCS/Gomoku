@@ -23,8 +23,7 @@ void drawBoard(const Board& board,const int size) {
     for (int y = 0; y < size; ++y) {
         std::cout << (y % 10) << " ";
         for (int x = 0; x < size; ++x) {
-            Stone s = board.getStone(x, y);
-            if (s == Stone::BLACK) std::cout << "X ";
+            if (const Stone s = board.getStone(x, y); s == Stone::BLACK) std::cout << "X ";
             else if (s == Stone::WHITE) std::cout << "O ";
             else std::cout << ". ";
         }
@@ -35,7 +34,7 @@ void drawBoard(const Board& board,const int size) {
 int main() {
     constexpr int boardSize = 15;
     Board board(boardSize);
-    Stone currentPlayer = Stone::BLACK;
+    auto currentPlayer = Stone::BLACK;
 
     std::cout << "=== Gomoku ===\n";
     std::cout << "Commands: [x] [y]. Input -1 to exit.\n";
