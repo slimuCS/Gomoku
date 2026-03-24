@@ -10,7 +10,7 @@
  * - Resource Impact: 
  */
 
-#include "gomoku/main.h"
+#include "gomoku/engine.h"
 #include "gomoku/ui_controller.h"
 
 using namespace gomoku;

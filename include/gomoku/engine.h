@@ -1,5 +1,5 @@
 /**
- * @file main.h
+ * @file engine.h
  * @author shawn
  * @date 2026/3/19
  * @brief the file is to set the base struct about gomoku

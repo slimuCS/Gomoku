@@ -11,7 +11,7 @@
  */
 #ifndef GOMOKU_UI_CONTROLLER_H
 #define GOMOKU_UI_CONTROLLER_H
-#include "main.h"
+#include "engine.h"
 #include <ftxui/component/component.hpp>
 #include <ftxui/component/screen_interactive.hpp>
 

@@ -24,7 +24,7 @@ namespace UI {
             return true;
         }
 
-        bool OnEvent(Event event) override {
+        bool OnEvent(const Event event) override {
             return eventLogic(event);
         }
 
@@ -33,7 +33,7 @@ namespace UI {
     Controller::Controller(gomoku::Board& board) : board(board) {};
 
     void Controller::Start() {
-        auto container = Container::Tab({
+        const auto container = Container::Tab({
             this->RenderFrontPage(),
             this->RenderGameBoard(),
             this->RenderEndPage()
@@ -134,7 +134,7 @@ namespace UI {
         });
 
         return Renderer(container, [container, this] {
-            std::string winner = (current_player == gomoku::Stone::BLACK) ? "Black Win!" : "White win!";
+            const std::string winner = (current_player == gomoku::Stone::BLACK) ? "Black Win!" : "White win!";
             return vbox({
                 text("Game over") | hcenter | bold | color(Color::Red),
                 separator(),
@@ -154,7 +154,7 @@ namespace UI {
         for (int y = 0; y < 15; ++y) {
             Elements cols;
             for (int x = 0; x < 15; ++x) {
-                auto stone = board.getStone(x, y);
+                const auto stone = board.getStone(x, y);
                 const std::string cell = (board.getStone(x, y) == gomoku::Stone::EMPTY) ? " + " :
                                    (board.getStone(x, y) == gomoku::Stone::BLACK) ? " ○ " : " ● ";
                 auto element = text(cell);
