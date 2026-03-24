@@ -38,6 +38,7 @@ namespace gomoku {
         [[nodiscard]] Stone getStone(int x, int y) const;
         [[nodiscard]] Stone getCurrentPlayer() const;
         [[nodiscard]] GameStatus getStatus() const;
+        [[nodiscard]] int getSize() const { return size_; }
     };
 }
 
