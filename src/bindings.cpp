@@ -45,6 +45,7 @@ PYBIND11_MODULE(gomoku_ai, m) {
             py::array_t<float> observation({3, size, size});
             auto r = observation.mutable_unchecked<3>();
 
+            // me is your opponent, opponent is you, because the observation is from the perspective of the current player
             const gomoku::Stone me = b.getCurrentPlayer();
             const gomoku::Stone opponent = (me == gomoku::Stone::BLACK) ? gomoku::Stone::WHITE : gomoku::Stone::BLACK;
 

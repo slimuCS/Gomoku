@@ -34,7 +34,16 @@ add_executable(Gomoku_Project
 
 pybind11_add_module(gomoku_ai src/bindings.cpp)
 
-target_link_libraries(gomoku_ai PRIVATE gomoku_core)
+target_link_libraries(gomoku_ai PRIVATE gomoku_core
+        -static-libgcc
+        -static-libstdc++
+        -static
+        -lpthread
+)
+
+set_target_properties(gomoku_ai PROPERTIES
+        LIBRARY_OUTPUT_DIRECTORY "${CMAKE_SOURCE_DIR}"
+)
 
 target_include_directories(Gomoku_Project PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
 
