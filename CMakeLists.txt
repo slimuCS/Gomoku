@@ -1,18 +1,9 @@
 cmake_minimum_required(VERSION 3.20)
-project(Gomoku)
+project(Gomoku LANGUAGES CXX)
 
 set(CMAKE_CXX_STANDARD 20)
-
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
-
-include_directories(include)
-
-add_executable(Gomoku_Project
-        include/gomoku/main.h
-        src/main.cpp
-        src/app.cpp
-        src/ui_controller.cpp
-)
+set(CMAKE_CXX_EXTENSIONS OFF)
 
 include(FetchContent)
 FetchContent_Declare(ftxui
@@ -21,8 +12,18 @@ FetchContent_Declare(ftxui
 )
 FetchContent_MakeAvailable(ftxui)
 
+add_executable(Gomoku_Project
+        include/gomoku/engine.h
+        src/engine.cpp
+        src/app.cpp
+        src/ui_controller.cpp
+)
+
+target_include_directories(Gomoku_Project PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/include
+)
+
 target_link_libraries(Gomoku_Project PRIVATE
-        # Chose a submodule
         ftxui::component
         ftxui::dom
         ftxui::screen

@@ -1,5 +1,5 @@
 /**
- * @file main.cpp
+ * @file engine.cpp
  * @author shawn
  * @date 2026/3/19
  * @brief the file is to set the gomoku member function
@@ -9,7 +9,7 @@
  * - System Calls / Interactions: 
  * - Resource Impact: 
  */
-#include "gomoku/main.h"
+#include "gomoku/engine.h"
 
 namespace gomoku {
     Board::Board(const int s) : size_(s), grid_(s * s, Stone::EMPTY) {
