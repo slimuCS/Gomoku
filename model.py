@@ -4,15 +4,58 @@
 # @File : model.py
 # @Project : Gomoku
 import numpy as np
+import torch
 import gomoku_ai
-board = gomoku_ai.Board(15)
 
-board.place_stone(7, 7)
+class TreeNode:
+    def __init__(self, parent, prior_p):
+        self.parent = parent
+        self.children = {}
+        self.n_visits = 0
+        self.Q = 0
+        self.P = prior_p
+    def isleaf(self):
+        return len(self.children) == 0
+    def isroot(self):
+        return self.parent is None
+class MCTS:
+    def __init__(self, model, simulations=1000):
+        self.model = model
+        self.simulations = simulations
+    def getAction(self, realBoard):
+        root = TreeNode(parent=None, prior_p= 1.0)
 
-obs = board.get_observation()
+        for _ in range(self.simulations):
+            boardPtr = self.cloneBoard(realBoard)
+            node = root
 
-print(obs)  # Should be (3, 15, 15)
+            while node.isleaf():
+                action, node = self.select(cpuct = 5)
+                r, c = divmod(action, 15)
+                boardPtr.place(r, c)
 
-assert obs[1][7][7] == 1.0
-assert np.sum(obs[1]) == 1.0
-assert obs[2, 0,0] == 1.0
+            obs = boardPtr.get_observation()
+            policy, value = self.model(torch.from_numpy(obs).float().unsqueeze(0))
+
+            policy = policy.detach().numpy()[0]
+            value = value.item()
+            valid_moves = boardPtr.get_valid_moves()
+            policy = policy * valid_moves
+    def cloneBoard(self, board):
+        new_board = gomoku_ai.Board(board.width, board.height)
+        new_board.board = np.copy(board.board)
+        return new_board
+
+    def select(self, cpuct):
+        best_action = -1
+        best_node = None
+        max_u = -float('inf')
+
+        for action, node in self.children.items():
+            u = node.Q + cpuct * node.P * np.sqrt(node.parent.n_visits) / (1 + node.n_visits)
+            if u > max_u:
+                max_u = u
+                best_action = action
+                best_node = node
+
+        return best_action, best_node
