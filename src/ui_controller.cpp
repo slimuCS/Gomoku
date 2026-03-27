@@ -6,7 +6,12 @@
 #include "ftxui/dom/elements.hpp"
 #include "ftxui/util/ref.hpp"
 #include <algorithm>
+#include <array>
+#include <cstdio>
+#include <optional>
+#include <sstream>
 #include <string>
+#include <utility>
 #include <vector>
 
 namespace UI {
@@ -14,6 +19,100 @@ namespace UI {
 
     namespace {
         constexpr int kBoardSize = 15;
+
+#ifdef GOMOKU_SOURCE_DIR
+        constexpr const char* kSourceDir = GOMOKU_SOURCE_DIR;
+#else
+        constexpr const char* kSourceDir = ".";
+#endif
+
+#ifdef GOMOKU_PYTHON_EXECUTABLE
+        constexpr const char* kPythonExecutable = GOMOKU_PYTHON_EXECUTABLE;
+#else
+        constexpr const char* kPythonExecutable = "python";
+#endif
+
+        char StoneToSymbol(const gomoku::Stone stone) {
+            if (stone == gomoku::Stone::BLACK)
+                return 'B';
+            if (stone == gomoku::Stone::WHITE)
+                return 'W';
+            return '.';
+        }
+
+        std::string SerializeBoard(const gomoku::Board& board) {
+            const int size = board.getSize();
+            std::string serialized;
+            serialized.reserve(size * size + size - 1);
+
+            for (int y = 0; y < size; ++y) {
+                for (int x = 0; x < size; ++x)
+                    serialized.push_back(StoneToSymbol(board.getStone(x, y)));
+                if (y + 1 < size)
+                    serialized.push_back('|');
+            }
+
+            return serialized;
+        }
+
+        std::optional<std::pair<int, int> > QueryAIMove(const gomoku::Board& board) {
+            const char current_symbol = StoneToSymbol(board.getCurrentPlayer());
+            const std::string board_text = SerializeBoard(board);
+            const std::string script_path = std::string(kSourceDir) + "/runModelAndReturnPoint.py";
+            const std::string model_path = std::string(kSourceDir) + "/gomoku_model.pt";
+
+            const std::string command =
+                "\"" + std::string(kPythonExecutable) + "\" "
+                "\"" + script_path + "\" "
+                "--board-size " + std::to_string(board.getSize()) + " "
+                "--model-path \"" + model_path + "\" "
+                "--current " + std::string(1, current_symbol) + " "
+                "--board \"" + board_text + "\" 2>&1";
+
+#if defined(_WIN32)
+            FILE* pipe = _popen(command.c_str(), "r");
+#else
+            FILE* pipe = popen(command.c_str(), "r");
+#endif
+            if (pipe == nullptr)
+                return std::nullopt;
+
+            std::array<char, 256> buffer {};
+            std::string output;
+            while (fgets(buffer.data(), static_cast<int>(buffer.size()), pipe) != nullptr)
+                output += buffer.data();
+
+#if defined(_WIN32)
+            const int exit_code = _pclose(pipe);
+#else
+            const int exit_code = pclose(pipe);
+#endif
+            if (exit_code != 0)
+                return std::nullopt;
+
+            std::istringstream parser(output);
+            int x = -1;
+            int y = -1;
+            if (!(parser >> x >> y))
+                return std::nullopt;
+
+            const int size = board.getSize();
+            if (x < 0 || x >= size || y < 0 || y >= size)
+                return std::nullopt;
+
+            return std::make_pair(x, y);
+        }
+
+        std::optional<std::pair<int, int> > FindFallbackMove(const gomoku::Board& board) {
+            const int size = board.getSize();
+            for (int y = 0; y < size; ++y) {
+                for (int x = 0; x < size; ++x) {
+                    if (board.getStone(x, y) == gomoku::Stone::EMPTY)
+                        return std::make_pair(x, y);
+                }
+            }
+            return std::nullopt;
+        }
     }
 
     class InteractiveBoard : public ComponentBase {
@@ -40,18 +139,18 @@ namespace UI {
         const auto container = Container::Tab({
             this->RenderFrontPage(),
             this->RenderGameBoard(),
+            this->RenderGameAIBoard(),
             this->RenderEndPage()
         }, &active_index);
 
         this->screen.Loop(container);
     }
-
     Component Controller::RenderFrontPage() {
         const auto menu = Menu(&menu_entries, &menu_selected);
 
         auto component = Renderer(menu, [menu] {
             return vbox({
-                text("=== Gomoku ===") | hcenter | bold | color(Color::Cyan),
+                text("=== Gomoku===") | hcenter | bold | color(Color::Cyan),
                 separator(),
                 menu->Render() | hcenter,
                 separator(),
@@ -67,8 +166,11 @@ namespace UI {
                 this->active_index = 1;
                 return true;
             }
-
             if (this->menu_selected == 1) {
+                this->active_index = 2;
+                return true;
+            }
+            if (this->menu_selected == 2) {
                 this->screen.Exit();
                 return true;
             }
@@ -77,6 +179,71 @@ namespace UI {
         });
 
         return component;
+    }
+    Component Controller::RenderGameAIBoard() {
+        auto comp = std::make_shared<InteractiveBoard>();
+
+        comp->renderLogic = [this]() -> Element {
+            return RenderGrid();
+        };
+
+        comp->eventLogic = [this](const Event& event) -> bool {
+            if (event == Event::ArrowUp) {
+                this->current_y = std::max(0, this->current_y - 1);
+                return true;
+            }
+            if (event == Event::ArrowDown) {
+                this->current_y = std::min(kBoardSize - 1, this->current_y + 1);
+                return true;
+            }
+            if (event == Event::ArrowLeft) {
+                this->current_x = std::max(0, this->current_x - 1);
+                return true;
+            }
+            if (event == Event::ArrowRight) {
+                this->current_x = std::min(kBoardSize - 1, this->current_x + 1);
+                return true;
+            }
+
+            if (event == Event::Return || event == Event::Character(' ')) {
+                if (this->board.placeStone(this->current_x, this->current_y)) {
+                    if (this->board.getStatus() != gomoku::GameStatus::PLAYING)
+                        this->active_index = 3;
+
+                    if (this->board.getStatus() == gomoku::GameStatus::PLAYING) {
+                        bool ai_placed = false;
+
+                        if (const auto ai_move = QueryAIMove(this->board); ai_move.has_value()) {
+                            const auto [ai_x, ai_y] = ai_move.value();
+                            ai_placed = this->board.placeStone(ai_x, ai_y);
+                            if (ai_placed) {
+                                this->current_x = ai_x;
+                                this->current_y = ai_y;
+                            }
+                        }
+
+                        if (!ai_placed) {
+                            if (const auto fallback = FindFallbackMove(this->board); fallback.has_value()) {
+                                const auto [fallback_x, fallback_y] = fallback.value();
+                                if (this->board.placeStone(fallback_x, fallback_y)) {
+                                    this->current_x = fallback_x;
+                                    this->current_y = fallback_y;
+                                }
+                            }
+                        }
+
+                        if (this->board.getStatus() != gomoku::GameStatus::PLAYING)
+                            this->active_index = 3;
+                    }
+
+                    return true;
+                }
+            }
+
+            return false;
+        };
+
+        return comp;
     }
 
     Component Controller::RenderGameBoard() {
@@ -107,7 +274,7 @@ namespace UI {
             if (event == Event::Return || event == Event::Character(' ')) {
                 if (this->board.placeStone(this->current_x, this->current_y)) {
                     if (this->board.getStatus() != gomoku::GameStatus::PLAYING)
-                        this->active_index = 2;
+                        this->active_index = 3;
                     return true;
                 }
             }

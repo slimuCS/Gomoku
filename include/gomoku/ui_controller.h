@@ -23,7 +23,7 @@ namespace UI {
     private:
         gomoku::Board& board;
         ftxui::ScreenInteractive screen = ftxui::ScreenInteractive::Fullscreen();
-        std::vector<std::string> menu_entries = {"Start Game", "Exit"};
+        std::vector<std::string> menu_entries = {"Start Game (PvP)","Start Geme (PvE)", "Exit"};
 
         int menu_selected = 0;
         int active_index = 0;
@@ -32,6 +32,7 @@ namespace UI {
 
         ftxui::Component RenderFrontPage();
         ftxui::Component RenderGameBoard();
+        ftxui::Component RenderGameAIBoard();
         ftxui::Component RenderEndPage();
 
         [[nodiscard]] ftxui::Element RenderGrid() const;
