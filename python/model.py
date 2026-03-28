@@ -1,10 +1,20 @@
 import math
 from collections import deque
 from contextlib import nullcontext
+import os
+from pathlib import Path
+import sys
 
 import numpy as np
 import torch
 import torch.nn.functional as F
+
+# Ensure gomoku_ai extension module can still be imported after moving scripts under /python.
+PROJECT_ROOT = Path(__file__).resolve().parent.parent
+if str(PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(PROJECT_ROOT))
+if sys.platform == "win32" and hasattr(os, "add_dll_directory"):
+    os.add_dll_directory(str(PROJECT_ROOT))
 
 import gomoku_ai
 

@@ -1,10 +1,20 @@
 import argparse
 import random
+from pathlib import Path
+import sys
 
 import numpy as np
 import torch
 
+PROJECT_ROOT = Path(__file__).resolve().parent.parent
+if str(PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(PROJECT_ROOT))
+
 from gomoku_net import GomokuNet, count_parameters, quantize_dynamic_linear, state_dict_size_mb
+
+DEFAULT_BOARD_SIZE = 15
+DEFAULT_HIDDEN_DIM = 256
+DEFAULT_TRUNK_LAYERS = 12
 
 
 def _seed_everything(seed):
@@ -20,17 +30,17 @@ def _seed_everything(seed):
 
 
 def train(
-    board_size=15,
-    hidden_dim=1033,
-    trunk_layers=2,
+    board_size=DEFAULT_BOARD_SIZE,
+    hidden_dim=DEFAULT_HIDDEN_DIM,
+    trunk_layers=DEFAULT_TRUNK_LAYERS,
     iterations=30,
     replay_capacity=50000,
-    num_self_play_games=4,
-    simulations=400,
+    num_self_play_games=12,
+    simulations=320,
     cpuct=4.2,
     batch_size=128,
-    updates_per_iteration=10,
-    min_buffer_size=256,
+    updates_per_iteration=16,
+    min_buffer_size=1024,
     temperature=1.0,
     temperature_drop_move=12,
     candidate_radius=2,
@@ -123,16 +133,21 @@ def train(
 
 def main():
     parser = argparse.ArgumentParser(description="Train Gomoku model and optionally compress it.")
-    parser.add_argument("--board-size", type=int, default=15)
-    parser.add_argument("--hidden-dim", type=int, default=1033, help="Lower this to shrink model size.")
-    parser.add_argument("--trunk-layers", type=int, default=2, help="Use 1 for the legacy single-hidden-layer model.")
+    parser.add_argument("--board-size", type=int, default=DEFAULT_BOARD_SIZE)
+    parser.add_argument("--hidden-dim", type=int, default=DEFAULT_HIDDEN_DIM, help="Lower this to shrink model size.")
+    parser.add_argument(
+        "--trunk-layers",
+        type=int,
+        default=DEFAULT_TRUNK_LAYERS,
+        help="Use 1 for the legacy single-hidden-layer model.",
+    )
     parser.add_argument("--iterations", type=int, default=30)
-    parser.add_argument("--self-play-games", type=int, default=4)
-    parser.add_argument("--simulations", type=int, default=200)
+    parser.add_argument("--self-play-games", type=int, default=12)
+    parser.add_argument("--simulations", type=int, default=320)
     parser.add_argument("--cpuct", type=float, default=4.2)
     parser.add_argument("--batch-size", type=int, default=128)
-    parser.add_argument("--updates-per-iteration", type=int, default=10)
-    parser.add_argument("--min-buffer-size", type=int, default=256)
+    parser.add_argument("--updates-per-iteration", type=int, default=16)
+    parser.add_argument("--min-buffer-size", type=int, default=1024)
     parser.add_argument("--temperature", type=float, default=1.0)
     parser.add_argument("--temperature-drop-move", type=int, default=12)
     parser.add_argument("--candidate-radius", type=int, default=2)

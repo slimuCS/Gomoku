@@ -37,6 +37,8 @@ namespace UI {
         int active_index = 0;
         int current_x = 0;
         int current_y = 0;
+        std::string ai_status_text = "AI: ready";
+        bool ai_used_fallback = false;
 
         ftxui::Component RenderFrontPage();
         ftxui::Component RenderGameBoard();

@@ -15,7 +15,7 @@
 
 namespace gomoku {
 
-    Board::Board(int s)
+    Board::Board(const int s)
         : size_(s),
           grid_(s * s, Stone::EMPTY),
           current_player_(Stone::BLACK),
