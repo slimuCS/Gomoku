@@ -13,7 +13,7 @@ if str(PROJECT_ROOT) not in sys.path:
 from gomoku_net import GomokuNet, count_parameters, quantize_dynamic_linear, state_dict_size_mb
 
 DEFAULT_BOARD_SIZE = 15
-DEFAULT_HIDDEN_DIM = 256
+DEFAULT_HIDDEN_DIM = 512
 DEFAULT_TRUNK_LAYERS = 12
 
 
@@ -35,15 +35,15 @@ def train(
     trunk_layers=DEFAULT_TRUNK_LAYERS,
     iterations=30,
     replay_capacity=50000,
-    num_self_play_games=12,
+    num_self_play_games=32,
     simulations=320,
-    cpuct=4.2,
+    cpuct=3,
     batch_size=128,
-    updates_per_iteration=16,
+    updates_per_iteration=48,
     min_buffer_size=1024,
     temperature=1.0,
-    temperature_drop_move=12,
-    candidate_radius=2,
+    temperature_drop_move=8,
+    candidate_radius=3,
     max_candidates=72,
     forced_check_depth=1,
     dirichlet_alpha=0.3,
@@ -54,7 +54,7 @@ def train(
     weight_decay=1e-4,
     min_lr=1e-5,
     use_amp=True,
-    policy_label_smoothing=0.03,
+    policy_label_smoothing=0.01,
     value_loss_type="huber",
     seed=None,
 ):

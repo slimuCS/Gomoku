@@ -334,12 +334,15 @@ namespace UI {
         AIMoveResult QueryAIMove(const gomoku::Board& board) {
             const char current_symbol = StoneToSymbol(board.getCurrentPlayer());
             const auto base_dirs = CollectBaseDirs();
-            const auto script_path = FindFileInBases(base_dirs, "runModelAndReturnPoint.py");
+            const auto script_path = [&]() -> std::optional<fs::path> {
+                if (auto p = FindFileInBases(base_dirs, "runModelAndReturnPoint.py"); p.has_value())
+                    return p;
+                return FindFileInBases(base_dirs, "python/runModelAndReturnPoint.py");
+            }();
             if (!script_path.has_value()) {
-                return AIMoveResult{
-                    std::nullopt,
+                return AIMoveResult{ std::nullopt,
                     "runModelAndReturnPoint.py not found; searched: "
-                    + CompactMessage(BuildSearchedPathsSummary(base_dirs, "runModelAndReturnPoint.py"), 220),
+                    + CompactMessage(BuildSearchedPathsSummary(base_dirs, "runModelAndReturnPoint.py"), 220)
                 };
             }
 
@@ -365,7 +368,6 @@ namespace UI {
             attempt_summaries.reserve(python_commands.size());
 
 #if defined(_WIN32)
-            // Ensure IDE-launched runs use a stable base directory.
             SetCurrentDirectoryA(fs::path(kSourceDir).string().c_str());
 #else
             {
