@@ -11,10 +11,12 @@ if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
 from gomoku_net import GomokuNet, count_parameters, quantize_dynamic_linear, state_dict_size_mb
+from training_extensions import ArenaEvaluator, CheckpointManager, TacticsChecker, TrainingMetrics
 
 DEFAULT_BOARD_SIZE = 15
 DEFAULT_HIDDEN_DIM = 512
 DEFAULT_TRUNK_LAYERS = 12
+DEFAULT_BEST_WINRATE_THRESHOLD = 0.55
 
 
 def _seed_everything(seed):
@@ -27,6 +29,12 @@ def _seed_everything(seed):
     torch.manual_seed(seed)
     if torch.cuda.is_available():
         torch.cuda.manual_seed_all(seed)
+
+
+def _fmt_float(value, digits=4):
+    if value is None:
+        return "NA"
+    return f"{float(value):.{digits}f}"
 
 
 def train(
@@ -54,9 +62,22 @@ def train(
     weight_decay=1e-4,
     min_lr=1e-5,
     use_amp=True,
-    policy_label_smoothing=0.01,
+    policy_label_smoothing=0.03,
     value_loss_type="huber",
     seed=None,
+    training_log_path="training_log.jsonl",
+    eval_every=2,
+    arena_games_vs_random=12,
+    arena_games_vs_best=20,
+    arena_simulations=96,
+    arena_cpuct=None,
+    best_model_path="gomoku_model_best.pt",
+    last_model_path="gomoku_model_last.pt",
+    periodic_checkpoint_dir="checkpoints",
+    periodic_checkpoint_every=5,
+    best_winrate_threshold=DEFAULT_BEST_WINRATE_THRESHOLD,
+    tactics_use_mcts=False,
+    tactics_mcts_simulations=64,
 ):
     from model import ReplayBuffer, run_training_iteration
 
@@ -89,6 +110,34 @@ def train(
             scaler = torch.cuda.amp.GradScaler(enabled=True)
 
     replay = ReplayBuffer(capacity=replay_capacity)
+    metrics_logger = TrainingMetrics(log_path=training_log_path)
+    checkpoint_manager = CheckpointManager(
+        best_path=best_model_path,
+        last_path=last_model_path,
+        periodic_dir=periodic_checkpoint_dir,
+        periodic_every=periodic_checkpoint_every,
+    )
+    checkpoint_manager.ensure_best_exists(net, iteration=0)
+
+    arena_evaluator = ArenaEvaluator(
+        board_size=board_size,
+        simulations=arena_simulations,
+        cpuct=float(arena_cpuct) if arena_cpuct is not None else float(cpuct),
+        candidate_radius=candidate_radius,
+        max_candidates=max_candidates,
+        forced_check_depth=forced_check_depth,
+        seed=seed,
+    )
+
+    tactics_checker = TacticsChecker(
+        board_size=board_size,
+        use_mcts=tactics_use_mcts,
+        mcts_simulations=tactics_mcts_simulations,
+        cpuct=cpuct,
+        candidate_radius=candidate_radius,
+        max_candidates=max_candidates,
+        forced_check_depth=forced_check_depth,
+    )
 
     print(
         f"device={device}, amp={use_amp}, params={count_parameters(net):,}, "
@@ -97,8 +146,15 @@ def train(
         f"cpuct={cpuct}, sims={simulations}, augment={augment_symmetries}, "
         f"loss={value_loss_type}, label_smoothing={policy_label_smoothing}, seed={seed}"
     )
+    print(
+        f"metrics_log={training_log_path}, eval_every={eval_every}, "
+        f"arena_games(random/best)={arena_games_vs_random}/{arena_games_vs_best}, "
+        f"best_threshold={best_winrate_threshold:.2f}, "
+        f"tactics_puzzles={len(tactics_checker.puzzles)} ({'mcts' if tactics_use_mcts else 'policy'})"
+    )
 
     for i in range(iterations):
+        iter_idx = i + 1
         summary = run_training_iteration(
             model=net,
             optimizer=optimizer,
@@ -126,7 +182,97 @@ def train(
             policy_label_smoothing=policy_label_smoothing,
             value_loss_type=value_loss_type,
         )
-        print(f"[iter {i + 1:03d}/{iterations}] {summary}")
+
+        checkpoint_manager.save_last(net, iteration=iter_idx)
+        periodic_path = checkpoint_manager.save_periodic(net, iteration=iter_idx)
+
+        tactics_result = tactics_checker.evaluate(net, device=device)
+
+        arena_result = {
+            "evaluated": False,
+            "vs_random": None,
+            "vs_previous_best": None,
+            "best_promoted": False,
+            "best_threshold": float(best_winrate_threshold),
+        }
+
+        if int(eval_every) > 0 and iter_idx % int(eval_every) == 0:
+            arena_result["evaluated"] = True
+            arena_result["vs_random"] = arena_evaluator.evaluate_vs_random(
+                model=net,
+                games=arena_games_vs_random,
+            )
+
+            previous_best = checkpoint_manager.load_best_model_like(net, device=device)
+            if previous_best is not None:
+                vs_best = arena_evaluator.evaluate_vs_model(
+                    model=net,
+                    opponent_model=previous_best,
+                    games=arena_games_vs_best,
+                )
+                arena_result["vs_previous_best"] = vs_best
+
+                if float(vs_best["win_rate"]) > float(best_winrate_threshold):
+                    checkpoint_manager.save_best(
+                        net,
+                        iteration=iter_idx,
+                        metadata={
+                            "promotion_reason": "win_rate_above_threshold",
+                            "promotion_threshold": float(best_winrate_threshold),
+                            "vs_previous_best": vs_best,
+                        },
+                    )
+                    arena_result["best_promoted"] = True
+            else:
+                checkpoint_manager.save_best(
+                    net,
+                    iteration=iter_idx,
+                    metadata={"promotion_reason": "no_previous_best"},
+                )
+                arena_result["best_promoted"] = True
+
+        log_entry = {
+            "iteration": int(iter_idx),
+            "training": {
+                "policy_loss": summary.get("policy_loss"),
+                "value_loss": summary.get("value_loss"),
+                "policy_entropy": summary.get("policy_entropy"),
+                "value_mean": summary.get("value_mean"),
+                "updates_run": int(summary.get("updates_run", 0)),
+                "buffer_size": int(summary.get("buffer_size", 0)),
+            },
+            "arena": arena_result,
+            "tactics": tactics_result,
+        }
+        if periodic_path is not None:
+            log_entry["periodic_checkpoint"] = str(periodic_path)
+        metrics_logger.append(log_entry)
+
+        curve_text = (
+            f"pl={_fmt_float(summary.get('policy_loss'))}, "
+            f"vl={_fmt_float(summary.get('value_loss'))}, "
+            f"pe={_fmt_float(summary.get('policy_entropy'))}, "
+            f"vm={_fmt_float(summary.get('value_mean'))}"
+        )
+        tactics_text = (
+            f"tactics={tactics_result['hits']}/{tactics_result['total']} "
+            f"({tactics_result['hit_rate'] * 100:.1f}%)"
+        )
+        if arena_result["evaluated"]:
+            random_wr = arena_result["vs_random"]["win_rate"] * 100.0 if arena_result["vs_random"] else 0.0
+            if arena_result["vs_previous_best"] is None:
+                best_wr_text = "N/A"
+            else:
+                best_wr_text = f"{arena_result['vs_previous_best']['win_rate'] * 100.0:.1f}%"
+            arena_text = (
+                f"arena=random:{random_wr:.1f}% "
+                f"prev_best:{best_wr_text} "
+                f"promoted={arena_result['best_promoted']}"
+            )
+        else:
+            arena_text = "arena=skip"
+
+        print(f"[iter {iter_idx:03d}/{iterations}] {curve_text} | {tactics_text} | {arena_text}")
 
     return net, device
 
@@ -169,6 +315,21 @@ def main():
     parser.add_argument("--no-amp", action="store_true")
     parser.add_argument("--policy-label-smoothing", type=float, default=0.03)
     parser.add_argument("--value-loss-type", choices=("mse", "huber"), default="huber")
+
+    parser.add_argument("--training-log-path", default="training_log.jsonl")
+    parser.add_argument("--eval-every", type=int, default=2, help="Arena evaluation interval in iterations.")
+    parser.add_argument("--arena-games-vs-random", type=int, default=12)
+    parser.add_argument("--arena-games-vs-best", type=int, default=20)
+    parser.add_argument("--arena-simulations", type=int, default=96)
+    parser.add_argument("--arena-cpuct", type=float, default=None)
+    parser.add_argument("--best-model-path", default="gomoku_model_best.pt")
+    parser.add_argument("--last-model-path", default="gomoku_model_last.pt")
+    parser.add_argument("--periodic-checkpoint-dir", default="checkpoints")
+    parser.add_argument("--periodic-checkpoint-every", type=int, default=5)
+    parser.add_argument("--best-winrate-threshold", type=float, default=DEFAULT_BEST_WINRATE_THRESHOLD)
+    parser.add_argument("--tactics-use-mcts", action="store_true")
+    parser.add_argument("--tactics-mcts-simulations", type=int, default=64)
+
     parser.add_argument("--save-path", default="gomoku_model.pt")
     parser.add_argument("--quantize", action="store_true", help="Export int8 dynamic-quantized model.")
     parser.add_argument("--quantized-save-path", default="gomoku_model_int8.pt")
@@ -203,6 +364,19 @@ def main():
         policy_label_smoothing=args.policy_label_smoothing,
         value_loss_type=args.value_loss_type,
         seed=args.seed,
+        training_log_path=args.training_log_path,
+        eval_every=args.eval_every,
+        arena_games_vs_random=args.arena_games_vs_random,
+        arena_games_vs_best=args.arena_games_vs_best,
+        arena_simulations=args.arena_simulations,
+        arena_cpuct=args.arena_cpuct,
+        best_model_path=args.best_model_path,
+        last_model_path=args.last_model_path,
+        periodic_checkpoint_dir=args.periodic_checkpoint_dir,
+        periodic_checkpoint_every=args.periodic_checkpoint_every,
+        best_winrate_threshold=args.best_winrate_threshold,
+        tactics_use_mcts=args.tactics_use_mcts,
+        tactics_mcts_simulations=args.tactics_mcts_simulations,
     )
 
     net_cpu = net.to("cpu").eval()

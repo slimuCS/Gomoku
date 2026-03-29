@@ -908,16 +908,21 @@ def train_step(
         policy_output, value_output = model(states_t)
         value_output = value_output.view(-1)
         log_policy = _policy_log_probs_torch(policy_output)
+        policy_probs = torch.exp(log_policy)
 
         policy_loss = -(target_policies_t * log_policy).sum(dim=1).mean()
+        policy_entropy = -(policy_probs * log_policy).sum(dim=1).mean()
         if str(value_loss_type).lower() == "huber":
             value_loss = F.smooth_l1_loss(value_output, target_values_t)
         else:
             value_loss = F.mse_loss(value_output, target_values_t)
+        value_mean = value_output.mean()
         loss = policy_loss_weight * policy_loss + value_loss_weight * value_loss
 
     grad_norm = None
+    optimizer_step_happened = False
     if scaler is not None and autocast_enabled:
+        scale_before = float(scaler.get_scale())
         scaler.scale(loss).backward()
         if max_grad_norm is not None and float(max_grad_norm) > 0:
             scaler.unscale_(optimizer)
@@ -927,6 +932,7 @@ def train_step(
             )
         scaler.step(optimizer)
         scaler.update()
+        optimizer_step_happened = float(scaler.get_scale()) >= scale_before
     else:
         loss.backward()
         if max_grad_norm is not None and float(max_grad_norm) > 0:
@@ -935,8 +941,9 @@ def train_step(
                 max_norm=float(max_grad_norm),
             )
         optimizer.step()
+        optimizer_step_happened = True
 
-    if scheduler is not None:
+    if scheduler is not None and optimizer_step_happened:
         scheduler.step()
 
     current_lr = float(optimizer.param_groups[0]["lr"])
@@ -945,6 +952,8 @@ def train_step(
         "loss": float(loss.item()),
         "policy_loss": float(policy_loss.item()),
         "value_loss": float(value_loss.item()),
+        "policy_entropy": float(policy_entropy.item()),
+        "value_mean": float(value_mean.item()),
         "batch_size": int(states_t.shape[0]),
         "grad_norm": float(grad_norm.item()) if grad_norm is not None else None,
         "lr": current_lr,
@@ -1033,8 +1042,20 @@ def run_training_iteration(
         summary["avg_loss"] = float(np.mean([u["loss"] for u in updates]))
         summary["avg_policy_loss"] = float(np.mean([u["policy_loss"] for u in updates]))
         summary["avg_value_loss"] = float(np.mean([u["value_loss"] for u in updates]))
+        summary["avg_policy_entropy"] = float(np.mean([u["policy_entropy"] for u in updates]))
+        summary["avg_value_mean"] = float(np.mean([u["value_mean"] for u in updates]))
+        # Aliases for per-iteration training curves.
+        summary["policy_loss"] = summary["avg_policy_loss"]
+        summary["value_loss"] = summary["avg_value_loss"]
+        summary["policy_entropy"] = summary["avg_policy_entropy"]
+        summary["value_mean"] = summary["avg_value_mean"]
         summary["avg_lr"] = float(np.mean([u["lr"] for u in updates]))
         grad_norms = [u["grad_norm"] for u in updates if u["grad_norm"] is not None]
         if grad_norms:
             summary["avg_grad_norm"] = float(np.mean(grad_norms))
+    else:
+        summary["policy_loss"] = None
+        summary["value_loss"] = None
+        summary["policy_entropy"] = None
+        summary["value_mean"] = None
     return summary
