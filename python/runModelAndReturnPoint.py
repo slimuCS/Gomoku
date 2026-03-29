@@ -12,562 +12,362 @@ if str(PROJECT_ROOT) not in sys.path:
 
 from gomoku_net import build_model_from_state_dict
 
-EMPTY = 0
-BLACK = 1
-WHITE = 2
+EMPTY, BLACK, WHITE = 0, 1, 2
 DIRECTIONS = ((1, 0), (0, 1), (1, 1), (1, -1))
 
 DEFAULT_LOOKAHEAD_DEPTH = 2
-LOOKAHEAD_MIN_STONES = 6
-LOOKAHEAD_TOP_ACTIONS = 10
+LOOKAHEAD_MIN_STONES    = 6
+LOOKAHEAD_TOP_ACTIONS   = 10
 LOOKAHEAD_OPP_RESPONSES = 8
 
-SYMBOL_TO_STONE = {
-    ".": EMPTY,
-    "B": BLACK,
-    "W": WHITE,
-}
+SYMBOL_TO_STONE = {".": EMPTY, "B": BLACK, "W": WHITE}
+PLAYER_TO_STONE = {"B": BLACK, "W": WHITE}
 
-PLAYER_TO_STONE = {
-    "B": BLACK,
-    "W": WHITE,
-}
+opponent_of = {BLACK: WHITE, WHITE: BLACK}
 
+# ── low-level line helpers ────────────────────────────────────────────────────
 
-def _count_direction(grid: np.ndarray, x: int, y: int, dx: int, dy: int, player: int, board_size: int) -> int:
+def _count_dir(grid, x, y, dx, dy, player, size):
     count = 0
-    step = 1
-    while step < 5:
-        nx = x + dx * step
-        ny = y + dy * step
-        if nx < 0 or nx >= board_size or ny < 0 or ny >= board_size:
-            break
-        if int(grid[nx, ny]) != player:
-            break
+    nx, ny = x + dx, y + dy
+    while 0 <= nx < size and 0 <= ny < size and grid[nx, ny] == player:
         count += 1
-        step += 1
+        nx += dx; ny += dy
     return count
 
+def _line_len(grid, x, y, player, dx, dy, size):
+    return 1 + _count_dir(grid, x, y, -dx, -dy, player, size) \
+        + _count_dir(grid, x, y,  dx,  dy, player, size)
 
-def _line_length_if_place(grid: np.ndarray, x: int, y: int, player: int, dx: int, dy: int, board_size: int) -> int:
-    left = _count_direction(grid, x, y, -dx, -dy, player, board_size)
-    right = _count_direction(grid, x, y, dx, dy, player, board_size)
-    return 1 + left + right
+def _open_ends(grid, x, y, player, dx, dy, size):
+    left  = _count_dir(grid, x, y, -dx, -dy, player, size)
+    right = _count_dir(grid, x, y,  dx,  dy, player, size)
+    lx, ly = x - dx * (left + 1),  y - dy * (left + 1)
+    rx, ry = x + dx * (right + 1), y + dy * (right + 1)
+    return (int(0 <= lx < size and 0 <= ly < size and grid[lx, ly] == EMPTY) +
+            int(0 <= rx < size and 0 <= ry < size and grid[rx, ry] == EMPTY))
 
+# ── tactical score & winning detection ───────────────────────────────────────
 
-def _open_ends_if_place(grid: np.ndarray, x: int, y: int, player: int, dx: int, dy: int, board_size: int) -> int:
-    left = _count_direction(grid, x, y, -dx, -dy, player, board_size)
-    right = _count_direction(grid, x, y, dx, dy, player, board_size)
+# Score table: (line_len, open_ends) → score
+_SCORE_TABLE = {
+    (5, 0): 1_000_000, (5, 1): 1_000_000, (5, 2): 1_000_000,
+    (4, 2):    60_000, (4, 1):    12_000,
+    (3, 2):     1_500, (3, 1):       220,
+    (2, 2):        80, (2, 1):        16,
+}
 
-    lx = x - dx * (left + 1)
-    ly = y - dy * (left + 1)
-    rx = x + dx * (right + 1)
-    ry = y + dy * (right + 1)
-
-    open_ends = 0
-    if 0 <= lx < board_size and 0 <= ly < board_size and int(grid[lx, ly]) == EMPTY:
-        open_ends += 1
-    if 0 <= rx < board_size and 0 <= ry < board_size and int(grid[rx, ry]) == EMPTY:
-        open_ends += 1
-    return open_ends
-
-
-def _is_winning_action(grid: np.ndarray, action: int, player: int, board_size: int) -> bool:
-    x, y = divmod(int(action), board_size)
-    if int(grid[x, y]) != EMPTY:
-        return False
-
-    for dx, dy in DIRECTIONS:
-        if _line_length_if_place(grid, x, y, player, dx, dy, board_size) >= 5:
-            return True
-    return False
-
-
-def _winning_actions(grid: np.ndarray, player: int, board_size: int) -> np.ndarray:
-    valid_actions = np.flatnonzero(grid.reshape(-1) == EMPTY)
-    if valid_actions.size == 0:
-        return np.asarray([], dtype=np.int32)
-
-    wins = [int(a) for a in valid_actions if _is_winning_action(grid, int(a), player, board_size)]
-    return np.asarray(wins, dtype=np.int32)
-
-
-def _tactical_score(grid: np.ndarray, action: int, player: int, board_size: int) -> float:
-    x, y = divmod(int(action), board_size)
-    if int(grid[x, y]) != EMPTY:
+def _tactical_score(grid, action, player, size):
+    x, y = divmod(int(action), size)
+    if grid[x, y] != EMPTY:
         return 0.0
 
-    score = 0.0
-    open_three_count = 0
-    four_plus_count = 0
+    total = 0.0
+    open_three = four_plus = 0
     for dx, dy in DIRECTIONS:
-        line_len = _line_length_if_place(grid, x, y, player, dx, dy, board_size)
-        if line_len >= 5:
-            return 1_000_000.0
+        ll = _line_len(grid, x, y, player, dx, dy, size)
+        oe = _open_ends(grid, x, y, player, dx, dy, size)
+        s  = _SCORE_TABLE.get((min(ll, 5), oe), 0)
+        total += s
+        if ll >= 4: four_plus  += 1
+        if ll == 3 and oe == 2: open_three += 1
 
-        open_ends = _open_ends_if_place(grid, x, y, player, dx, dy, board_size)
-        if line_len == 4:
-            if open_ends == 2:
-                score += 60_000.0
-                four_plus_count += 1
-            elif open_ends == 1:
-                score += 12_000.0
-                four_plus_count += 1
-        elif line_len == 3:
-            if open_ends == 2:
-                score += 1_500.0
-                open_three_count += 1
-            elif open_ends == 1:
-                score += 220.0
-        elif line_len == 2:
-            if open_ends == 2:
-                score += 80.0
-            elif open_ends == 1:
-                score += 16.0
+    if four_plus   >= 2: total += 90_000
+    if open_three  >= 2: total +=  6_000
+    return total
 
-    if four_plus_count >= 2:
-        score += 90_000.0
-    if open_three_count >= 2:
-        score += 6_000.0
-    return score
+def _is_win(grid, action, player, size):
+    x, y = divmod(int(action), size)
+    return grid[x, y] == EMPTY and any(
+        _line_len(grid, x, y, player, dx, dy, size) >= 5
+        for dx, dy in DIRECTIONS
+    )
 
+def _winning_actions(grid, player, size):
+    valids = np.flatnonzero(grid.reshape(-1) == EMPTY)
+    return np.array([a for a in valids if _is_win(grid, a, player, size)], dtype=np.int32)
 
-def _candidate_actions(
-    grid: np.ndarray,
-    current_player: int,
-    board_size: int,
-    radius: int = 2,
-    max_actions: int = 72,
-) -> np.ndarray:
-    valid_actions = np.flatnonzero(grid.reshape(-1) == EMPTY)
-    if valid_actions.size == 0:
-        return np.asarray([], dtype=np.int32)
+# ── candidate generation ──────────────────────────────────────────────────────
+
+def _candidate_actions(grid, player, size, radius=2, max_actions=72):
+    valids = np.flatnonzero(grid.reshape(-1) == EMPTY)
+    if valids.size == 0:
+        return valids.astype(np.int32)
 
     occupied = np.argwhere(grid != EMPTY)
     if occupied.size == 0:
-        center = (board_size // 2) * board_size + (board_size // 2)
-        return np.asarray([center], dtype=np.int32)
+        return np.array([(size // 2) * size + (size // 2)], dtype=np.int32)
 
-    radius = max(1, int(radius))
-    mask = np.zeros((board_size, board_size), dtype=bool)
+    mask = np.zeros((size, size), dtype=bool)
     for ox, oy in occupied:
-        x0 = max(0, int(ox) - radius)
-        x1 = min(board_size, int(ox) + radius + 1)
-        y0 = max(0, int(oy) - radius)
-        y1 = min(board_size, int(oy) + radius + 1)
-        mask[x0:x1, y0:y1] = True
-
+        mask[max(0, ox-radius):min(size, ox+radius+1),
+        max(0, oy-radius):min(size, oy+radius+1)] = True
     mask &= (grid == EMPTY)
+
     candidates = np.flatnonzero(mask.reshape(-1))
     if candidates.size == 0:
-        return valid_actions.astype(np.int32)
+        return valids.astype(np.int32)
 
-    max_actions = int(max_actions)
     if 0 < max_actions < candidates.size:
-        opponent = WHITE if current_player == BLACK else BLACK
-        center = (board_size - 1) * 0.5
-        scores = np.zeros(candidates.size, dtype=np.float64)
-        for i, action in enumerate(candidates):
-            x, y = divmod(int(action), board_size)
-            attack = _tactical_score(grid, int(action), current_player, board_size)
-            defend = _tactical_score(grid, int(action), opponent, board_size)
-            center_bias = board_size - (abs(x - center) + abs(y - center))
-            scores[i] = attack + 0.92 * defend + 0.15 * center_bias
-
-        top_idx = np.argpartition(scores, -max_actions)[-max_actions:]
-        top_scores = scores[top_idx]
-        order = np.argsort(top_scores)[::-1]
-        candidates = candidates[top_idx[order]]
-
+        candidates = _top_scored(candidates, grid, player, size, max_actions)
     return candidates.astype(np.int32)
 
+def _top_scored(actions, grid, player, size, limit):
+    """Score and return top-`limit` actions by combined attack/defend/center."""
+    opp    = opponent_of[player]
+    center = (size - 1) * 0.5
+    scores = np.array([
+        _tactical_score(grid, a, player, size)
+        + 0.92 * _tactical_score(grid, a, opp, size)
+        + 0.15 * (size - (abs(divmod(int(a), size)[0] - center)
+                          + abs(divmod(int(a), size)[1] - center)))
+        for a in actions
+    ])
+    top = np.argpartition(scores, -limit)[-limit:]
+    return actions[top[np.argsort(scores[top])[::-1]]]
 
-def _minmax_normalize(values: np.ndarray, mask: np.ndarray) -> np.ndarray:
-    out = np.zeros_like(values, dtype=np.float64)
-    masked_values = values[mask]
-    if masked_values.size == 0:
-        return out
+def _top_actions(actions, scores, limit):
+    if actions.size <= limit:
+        return actions[np.argsort(scores)[::-1]].astype(np.int32)
+    top = np.argpartition(scores, -limit)[-limit:]
+    return actions[top[np.argsort(scores[top])[::-1]]].astype(np.int32)
 
-    min_v = float(np.min(masked_values))
-    max_v = float(np.max(masked_values))
-    if max_v - min_v <= 1e-12:
-        return out
-    out[mask] = (masked_values - min_v) / (max_v - min_v)
-    return out
+# ── lookahead helpers ─────────────────────────────────────────────────────────
 
-
-def _place_action(grid: np.ndarray, action: int, player: int, board_size: int) -> np.ndarray | None:
-    x, y = divmod(int(action), board_size)
-    if int(grid[x, y]) != EMPTY:
+def _place(grid, action, player, size):
+    x, y = divmod(int(action), size)
+    if grid[x, y] != EMPTY:
         return None
-    next_grid = grid.copy()
-    next_grid[x, y] = player
-    return next_grid
+    g = grid.copy(); g[x, y] = player
+    return g
 
+def _static_score(grid, player, size):
+    opp = opponent_of[player]
+    if _winning_actions(grid, player, size).size > 0: return  1_000_000.0
+    if _winning_actions(grid, opp,    size).size > 0: return -1_000_000.0
 
-def _static_position_score(grid: np.ndarray, player: int, board_size: int) -> float:
-    opponent = WHITE if player == BLACK else BLACK
-
-    winning = _winning_actions(grid, player, board_size)
-    if winning.size > 0:
-        return 1_000_000.0
-
-    blocking = _winning_actions(grid, opponent, board_size)
-    if blocking.size > 0:
-        return -1_000_000.0
-
-    candidates = _candidate_actions(
-        grid,
-        current_player=player,
-        board_size=board_size,
-        radius=2,
-        max_actions=48,
-    )
-    if candidates.size == 0:
-        candidates = np.flatnonzero(grid.reshape(-1) == EMPTY).astype(np.int32)
-    if candidates.size == 0:
+    cands = _candidate_actions(grid, player, size, radius=2, max_actions=48)
+    if cands.size == 0:
+        cands = np.flatnonzero(grid.reshape(-1) == EMPTY).astype(np.int32)
+    if cands.size == 0:
         return 0.0
 
-    my_best_attack = 0.0
-    opp_best_attack = 0.0
-    for action in candidates:
-        my_best_attack = max(my_best_attack, _tactical_score(grid, int(action), player, board_size))
-        opp_best_attack = max(opp_best_attack, _tactical_score(grid, int(action), opponent, board_size))
+    my_best  = max(_tactical_score(grid, a, player, size) for a in cands)
+    opp_best = max(_tactical_score(grid, a, opp,    size) for a in cands)
+    return float(my_best - 0.88 * opp_best)
 
-    return float(my_best_attack - 0.88 * opp_best_attack)
+def _opp_responses(grid, opp, size, limit):
+    wins = _winning_actions(grid, opp, size)
+    if wins.size > 0:
+        return wins[:limit]
+    cands = _candidate_actions(grid, opp, size, radius=2, max_actions=max(24, limit * 3))
+    if cands.size == 0:
+        cands = np.flatnonzero(grid.reshape(-1) == EMPTY).astype(np.int32)
+    if cands.size == 0:
+        return cands
 
+    player = opponent_of[opp]
+    scores = np.array([
+        _tactical_score(grid, a, opp, size) + 0.95 * _tactical_score(grid, a, player, size)
+        for a in cands
+    ])
+    return _top_actions(cands, scores, limit)
 
-def _top_actions(actions: np.ndarray, scores: np.ndarray, limit: int) -> np.ndarray:
-    if actions.size == 0:
-        return np.asarray([], dtype=np.int32)
-    if actions.size <= int(limit):
-        order = np.argsort(scores)[::-1]
-        return actions[order].astype(np.int32)
-
-    top_idx = np.argpartition(scores, -int(limit))[-int(limit):]
-    top_scores = scores[top_idx]
-    order = np.argsort(top_scores)[::-1]
-    return actions[top_idx[order]].astype(np.int32)
-
-
-def _select_opponent_responses(
-    grid: np.ndarray,
-    opponent: int,
-    board_size: int,
-    limit: int,
-) -> np.ndarray:
-    limit = max(1, int(limit))
-    winning = _winning_actions(grid, opponent, board_size)
-    if winning.size > 0:
-        return winning[:limit]
-
-    candidates = _candidate_actions(
-        grid,
-        current_player=opponent,
-        board_size=board_size,
-        radius=2,
-        max_actions=max(24, limit * 3),
-    )
-    if candidates.size == 0:
-        candidates = np.flatnonzero(grid.reshape(-1) == EMPTY).astype(np.int32)
-    if candidates.size == 0:
-        return np.asarray([], dtype=np.int32)
-
-    player = WHITE if opponent == BLACK else BLACK
-    scores = np.zeros(candidates.size, dtype=np.float64)
-    for i, action in enumerate(candidates):
-        attack = _tactical_score(grid, int(action), opponent, board_size)
-        deny = _tactical_score(grid, int(action), player, board_size)
-        scores[i] = attack + 0.95 * deny
-
-    return _top_actions(candidates, scores, limit=limit)
-
-
-def _evaluate_move_with_lookahead(
-    grid: np.ndarray,
-    action: int,
-    player: int,
-    board_size: int,
-    depth: int,
-    response_limit: int,
-) -> float:
-    next_grid = _place_action(grid, int(action), player, board_size)
-    if next_grid is None:
+def _evaluate_lookahead(grid, action, player, size, depth, resp_limit):
+    next_g = _place(grid, action, player, size)
+    if next_g is None:
         return -1_000_000_000.0
 
-    opponent = WHITE if player == BLACK else BLACK
-    opp_winning = _winning_actions(next_grid, opponent, board_size)
-    if opp_winning.size > 0:
-        return -900_000.0 - float(opp_winning.size)
+    opp = opponent_of[player]
+    if _winning_actions(next_g, opp, size).size > 0:
+        return -900_000.0
 
-    if int(depth) <= 1:
-        return _static_position_score(next_grid, player, board_size)
+    if depth <= 1:
+        return _static_score(next_g, player, size)
 
-    responses = _select_opponent_responses(
-        next_grid,
-        opponent=opponent,
-        board_size=board_size,
-        limit=response_limit,
-    )
+    responses = _opp_responses(next_g, opp, size, resp_limit)
     if responses.size == 0:
-        return _static_position_score(next_grid, player, board_size)
+        return _static_score(next_g, player, size)
 
-    worst_case = float("inf")
-    for response in responses:
-        response_grid = _place_action(next_grid, int(response), opponent, board_size)
-        if response_grid is None:
-            continue
-
-        if _is_winning_action(next_grid, int(response), opponent, board_size):
+    worst = float("inf")
+    for resp in responses:
+        if _is_win(next_g, resp, opp, size):
             return -950_000.0
+        rg = _place(next_g, resp, opp, size)
+        if rg is None:
+            continue
+        score = (700_000.0 if _winning_actions(rg, player, size).size > 0
+                 else _static_score(rg, player, size))
+        worst = min(worst, score)
 
-        my_winning = _winning_actions(response_grid, player, board_size)
-        if my_winning.size > 0:
-            score = 700_000.0
-        else:
-            score = _static_position_score(response_grid, player, board_size)
+    return _static_score(next_g, player, size) if not np.isfinite(worst) else float(worst)
 
-        if score < worst_case:
-            worst_case = score
+# ── board / model utilities ───────────────────────────────────────────────────
 
-    if not np.isfinite(worst_case):
-        return _static_position_score(next_grid, player, board_size)
-    return float(worst_case)
-
-
-def parse_board(board_text: str, board_size: int) -> np.ndarray:
+def parse_board(board_text, size):
     text = str(board_text)
-    if "|" in text:
-        rows = text.split("|")
-        if len(rows) != board_size:
-            raise ValueError(f"board row count mismatch: expected {board_size}, got {len(rows)}")
-    else:
-        expected = board_size * board_size
-        if len(text) != expected:
-            raise ValueError(
-                f"board text length mismatch: expected {expected}, got {len(text)}"
-            )
-        rows = [text[i * board_size:(i + 1) * board_size] for i in range(board_size)]
-
-    # Keep the same indexing as the C++ binding: grid[x, y].
-    grid = np.zeros((board_size, board_size), dtype=np.int8)
+    rows = text.split("|") if "|" in text else [text[i*size:(i+1)*size] for i in range(size)]
+    if len(rows) != size:
+        raise ValueError(f"board row count mismatch: expected {size}, got {len(rows)}")
+    grid = np.zeros((size, size), dtype=np.int8)
     for y, row in enumerate(rows):
-        if len(row) != board_size:
-            raise ValueError(f"board col count mismatch in row {y}: expected {board_size}, got {len(row)}")
-        for x, symbol in enumerate(row):
-            if symbol not in SYMBOL_TO_STONE:
-                raise ValueError(f"invalid board symbol '{symbol}' at ({x}, {y})")
-            grid[x, y] = SYMBOL_TO_STONE[symbol]
-
+        if len(row) != size:
+            raise ValueError(f"row {y} width mismatch")
+        for x, sym in enumerate(row):
+            if sym not in SYMBOL_TO_STONE:
+                raise ValueError(f"invalid symbol '{sym}' at ({x},{y})")
+            grid[x, y] = SYMBOL_TO_STONE[sym]
     return grid
 
-
-def build_observation(grid: np.ndarray, current_player: int) -> np.ndarray:
-    opponent = WHITE if current_player == BLACK else BLACK
-
-    obs = np.empty((3, grid.shape[0], grid.shape[1]), dtype=np.float32)
-    obs[0] = (grid == current_player).astype(np.float32)
-    obs[1] = (grid == opponent).astype(np.float32)
-    obs[2] = (grid == EMPTY).astype(np.float32)
+def build_observation(grid, player):
+    opp = opponent_of[player]
+    obs = np.empty((3, *grid.shape), dtype=np.float32)
+    obs[0] = (grid == player).astype(np.float32)
+    obs[1] = (grid == opp   ).astype(np.float32)
+    obs[2] = (grid == EMPTY ).astype(np.float32)
     return obs
 
-
 @lru_cache(maxsize=4)
-def load_model(model_path: str, board_size: int) -> torch.nn.Module:
-    model_file = Path(model_path)
-    state_dict = torch.load(model_file, map_location="cpu")
-    model, _ = build_model_from_state_dict(state_dict, board_size=board_size)
-    model.eval()
-    return model
+def load_model(model_path, size):
+    state = torch.load(Path(model_path), map_location="cpu")
+    model, _ = build_model_from_state_dict(state, board_size=size)
+    return model.eval()
 
-
-def _resolve_model_path(model_path: str) -> Path:
-    model_file = Path(model_path)
-    if model_file.is_absolute():
-        return model_file
-
-    # Preserve old behavior and support moved scripts:
-    # 1) current working directory, 2) script dir, 3) project root.
-    candidates = (
-        Path.cwd() / model_file,
-        Path(__file__).resolve().parent / model_file,
-        PROJECT_ROOT / model_file,
-    )
-    for candidate in candidates:
+def _resolve_model(path):
+    p = Path(path)
+    if p.is_absolute():
+        return p
+    for candidate in (Path.cwd() / p, Path(__file__).resolve().parent / p, PROJECT_ROOT / p):
         if candidate.exists():
             return candidate
+    return p
 
-    return model_file
+def _normalize(values, mask):
+    out = np.zeros_like(values, dtype=np.float64)
+    v = values[mask]
+    lo, hi = v.min(), v.max()
+    if hi - lo > 1e-12:
+        out[mask] = (v - lo) / (hi - lo)
+    return out
 
+def _blend_scores(arrays_weights, mask):
+    """Weighted sum of normalized score arrays over `mask`."""
+    return sum(w * _normalize(arr, mask) for arr, w in arrays_weights)
 
-def getAIMove(
-    board_text: str,
-    current_player: str,
-    model_path: str = "gomoku_model.pt",
-    board_size: int = 15,
-    lookahead_depth: int = DEFAULT_LOOKAHEAD_DEPTH,
-):
-    player_key = current_player.upper()
-    if player_key not in PLAYER_TO_STONE:
-        raise ValueError("current player must be B or W")
+# ── main AI logic ─────────────────────────────────────────────────────────────
 
-    grid = parse_board(board_text, board_size)
-    player = PLAYER_TO_STONE[player_key]
+def getAIMove(board_text, current_player, model_path="gomoku_model.pt",
+              board_size=15, lookahead_depth=DEFAULT_LOOKAHEAD_DEPTH):
+    key = current_player.upper()
+    if key not in PLAYER_TO_STONE:
+        raise ValueError("current_player must be B or W")
 
-    model_file = _resolve_model_path(model_path)
+    grid   = parse_board(board_text, board_size)
+    player = PLAYER_TO_STONE[key]
+    opp    = opponent_of[player]
+    size   = board_size
+
+    model_file = _resolve_model(model_path)
     if not model_file.exists():
-        raise FileNotFoundError(f"model file not found: {model_file}")
+        raise FileNotFoundError(f"model not found: {model_file}")
 
-    model = load_model(str(model_file.resolve()), board_size)
-
+    # Model inference
     obs = build_observation(grid, player)
-    tensor_input = torch.from_numpy(obs).unsqueeze(0).float()
-
     with torch.inference_mode():
-        policy, _ = model(tensor_input)
+        policy, _ = load_model(str(model_file.resolve()), size)(
+            torch.from_numpy(obs).unsqueeze(0).float()
+        )
+    logits = policy.squeeze(0).cpu().numpy().astype(np.float64)
+    logits = np.nan_to_num(logits, nan=0.0, posinf=0.0, neginf=0.0)
 
-    move_logits = policy.squeeze(0).cpu().numpy().astype(np.float64)
-    if not np.all(np.isfinite(move_logits)):
-        move_logits = np.nan_to_num(move_logits, nan=0.0, posinf=0.0, neginf=0.0)
-    valid_mask = (grid.reshape(-1) == EMPTY)
-    if not np.any(valid_mask):
+    valid_mask = grid.reshape(-1) == EMPTY
+    if not valid_mask.any():
         raise ValueError("no valid moves")
 
-    opponent = WHITE if player == BLACK else BLACK
+    # Tactical guardrails
+    for p, mask_p in ((player, True), (opp, False)):
+        wins = _winning_actions(grid, p, size)
+        if wins.size > 0:
+            best = int(wins[np.argmax(logits[wins])])
+            return divmod(best, size)
 
-    # Tactical guardrails: always take immediate wins, always block opponent immediate wins.
-    winning = _winning_actions(grid, player, board_size)
-    if winning.size > 0:
-        best_move = int(winning[np.argmax(move_logits[winning])])
-        x, y = divmod(best_move, board_size)
-        return x, y
+    # Candidate mask
+    cands = _candidate_actions(grid, player, size, radius=2, max_actions=72)
+    allowed = np.zeros(size * size, dtype=bool)
+    if cands.size > 0:
+        allowed[cands] = True
+    allowed &= valid_mask
+    if not allowed.any():
+        allowed = valid_mask.copy()
 
-    blocking = _winning_actions(grid, opponent, board_size)
-    if blocking.size > 0:
-        best_move = int(blocking[np.argmax(move_logits[blocking])])
-        x, y = divmod(best_move, board_size)
-        return x, y
+    # Policy probabilities (softmax over allowed)
+    masked_logits = np.where(allowed, logits, -np.inf)
+    shifted = masked_logits[allowed] - masked_logits[allowed].max()
+    exp = np.exp(shifted)
+    policy_probs = np.zeros(size * size, dtype=np.float64)
+    denom = exp.sum()
+    policy_probs[allowed] = exp / denom if denom > 1e-12 else 1.0 / allowed.sum()
 
-    allowed_mask = np.zeros(board_size * board_size, dtype=bool)
-    candidates = _candidate_actions(
-        grid,
-        current_player=player,
-        board_size=board_size,
-        radius=2,
-        max_actions=72,
-    )
-    if candidates.size > 0:
-        allowed_mask[candidates] = True
-    allowed_mask &= valid_mask
-    if not np.any(allowed_mask):
-        allowed_mask = valid_mask.copy()
+    # Tactical scores
+    allowed_idx = np.flatnonzero(allowed)
+    center      = (size - 1) * 0.5
+    attack  = np.zeros(size * size, dtype=np.float64)
+    defend  = np.zeros(size * size, dtype=np.float64)
+    c_bias  = np.zeros(size * size, dtype=np.float64)
+    for a in allowed_idx:
+        attack[a] = _tactical_score(grid, a, player, size)
+        defend[a] = _tactical_score(grid, a, opp,    size)
+        x, y      = divmod(int(a), size)
+        c_bias[a] = size - (abs(x - center) + abs(y - center))
 
-    logits = move_logits.copy()
-    logits[~allowed_mask] = -np.inf
+    move_scores = _blend_scores([
+        (policy_probs, 0.62),
+        (attack,       0.23),
+        (defend,       0.12),
+        (c_bias,       0.03),
+    ], allowed)
 
-    finite_logits = logits[allowed_mask]
-    if finite_logits.size == 0:
-        best_move = int(np.flatnonzero(valid_mask)[0])
-        x, y = divmod(best_move, board_size)
-        return x, y
+    # Optional lookahead
+    stone_count = int((grid != EMPTY).sum())
+    if lookahead_depth > 0 and stone_count >= LOOKAHEAD_MIN_STONES and allowed.sum() > 1:
+        top_n    = min(LOOKAHEAD_TOP_ACTIONS, allowed_idx.size)
+        top_acts = allowed_idx[np.argsort(move_scores[allowed_idx])[::-1]][:top_n].astype(np.int32)
 
-    shifted = finite_logits - np.max(finite_logits)
-    exp_logits = np.exp(shifted)
-    policy_probs = np.zeros_like(logits, dtype=np.float64)
-    denom = float(np.sum(exp_logits))
-    if denom > 1e-12:
-        policy_probs[allowed_mask] = exp_logits / denom
-    else:
-        policy_probs[allowed_mask] = 1.0 / float(np.sum(allowed_mask))
+        la_scores = np.full(size * size, -np.inf, dtype=np.float64)
+        for a in top_acts:
+            la_scores[a] = _evaluate_lookahead(grid, a, player, size,
+                                               lookahead_depth, LOOKAHEAD_OPP_RESPONSES)
 
-    attack_scores = np.zeros(board_size * board_size, dtype=np.float64)
-    defend_scores = np.zeros(board_size * board_size, dtype=np.float64)
-    center_bias = np.zeros(board_size * board_size, dtype=np.float64)
-    center = (board_size - 1) * 0.5
-    for action in np.flatnonzero(allowed_mask):
-        attack_scores[action] = _tactical_score(grid, int(action), player, board_size)
-        defend_scores[action] = _tactical_score(grid, int(action), opponent, board_size)
-        x, y = divmod(int(action), board_size)
-        center_bias[action] = board_size - (abs(x - center) + abs(y - center))
+        top_mask = np.zeros_like(allowed, dtype=bool)
+        top_mask[top_acts] = True
 
-    policy_norm = _minmax_normalize(policy_probs, allowed_mask)
-    attack_norm = _minmax_normalize(attack_scores, allowed_mask)
-    defend_norm = _minmax_normalize(defend_scores, allowed_mask)
-    center_norm = _minmax_normalize(center_bias, allowed_mask)
+        base_n = _normalize(move_scores, allowed)
+        la_n   = _normalize(la_scores,   top_mask)
+        move_scores = base_n.copy()
+        move_scores[top_mask] = 0.72 * base_n[top_mask] + 0.28 * la_n[top_mask]
 
-    move_scores = (
-        0.62 * policy_norm
-        + 0.23 * attack_norm
-        + 0.12 * defend_norm
-        + 0.03 * center_norm
-    )
-
-    stone_count = int(np.count_nonzero(grid != EMPTY))
-    lookahead_depth = max(0, int(lookahead_depth))
-    if (
-        lookahead_depth > 0
-        and stone_count >= LOOKAHEAD_MIN_STONES
-        and np.sum(allowed_mask) > 1
-    ):
-        allowed_actions = np.flatnonzero(allowed_mask)
-        top_count = min(LOOKAHEAD_TOP_ACTIONS, allowed_actions.size)
-        ranked = allowed_actions[np.argsort(move_scores[allowed_actions])[::-1]]
-        top_actions = ranked[:top_count].astype(np.int32)
-
-        lookahead_scores = np.full(board_size * board_size, -np.inf, dtype=np.float64)
-        for action in top_actions:
-            lookahead_scores[int(action)] = _evaluate_move_with_lookahead(
-                grid,
-                action=int(action),
-                player=player,
-                board_size=board_size,
-                depth=lookahead_depth,
-                response_limit=LOOKAHEAD_OPP_RESPONSES,
-            )
-
-        top_mask = np.zeros_like(allowed_mask, dtype=bool)
-        top_mask[top_actions] = True
-
-        base_norm = _minmax_normalize(move_scores, allowed_mask)
-        lookahead_norm = _minmax_normalize(lookahead_scores, top_mask)
-        blended = base_norm.copy()
-        blended[top_mask] = 0.72 * base_norm[top_mask] + 0.28 * lookahead_norm[top_mask]
-        move_scores = blended
-
-    move_scores[~allowed_mask] = -np.inf
-    best_move = int(np.argmax(move_scores))
-    x, y = divmod(best_move, board_size)
-    return x, y
+    move_scores[~allowed] = -np.inf
+    return divmod(int(np.argmax(move_scores)), size)
 
 
-def main() -> int:
+def main():
     parser = argparse.ArgumentParser(description="Return AI move from gomoku_model.pt")
-    parser.add_argument(
-        "--board",
-        required=True,
-        help="serialized board, either rows joined by '|' or flat length board_size^2, using . B W",
-    )
-    parser.add_argument("--current", required=True, help="current player, B or W")
-    parser.add_argument("--board-size", type=int, default=15)
-    parser.add_argument("--model-path", default="gomoku_model.pt")
-    parser.add_argument("--lookahead-depth", type=int, default=DEFAULT_LOOKAHEAD_DEPTH)
+    parser.add_argument("--board",          required=True)
+    parser.add_argument("--current",        required=True)
+    parser.add_argument("--board-size",     type=int, default=15)
+    parser.add_argument("--model-path",     default="gomoku_model.pt")
+    parser.add_argument("--lookahead-depth",type=int, default=DEFAULT_LOOKAHEAD_DEPTH)
     args = parser.parse_args()
 
     try:
-        x, y = getAIMove(
-            board_text=args.board,
-            current_player=args.current,
-            model_path=args.model_path,
-            board_size=args.board_size,
-            lookahead_depth=args.lookahead_depth,
-        )
+        x, y = getAIMove(args.board, args.current, args.model_path,
+                         args.board_size, args.lookahead_depth)
     except Exception as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 1
 
     print(f"{x} {y}")
     return 0
-
 
 if __name__ == "__main__":
     raise SystemExit(main())
