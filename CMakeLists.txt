@@ -83,23 +83,23 @@ FetchContent_Declare(ftxui
 )
 FetchContent_MakeAvailable(ftxui)
 
-add_library(gomoku_core STATIC src/engine.cpp)
+add_library(gomoku_core STATIC src/core/engine.cpp)
 target_include_directories(gomoku_core PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
 
 
 add_executable(Gomoku_Project
-        src/app.cpp
-        src/ai_player.cpp
-        src/game_session.cpp
-        src/ui_controller.cpp
-        src/voice.cpp
-        src/webConnect.cpp
+        src/app/app.cpp
+        src/ai/ai_player.cpp
+        src/core/game_session.cpp
+        src/ui/ui_controller.cpp
+        src/audio/voice.cpp
+        src/net/webConnect.cpp
 )
 
 if(COMMAND pybind11_add_module)
-    pybind11_add_module(gomoku_ai src/bindings.cpp)
+    pybind11_add_module(gomoku_ai src/ai/bindings.cpp)
 else()
-    Python3_add_library(gomoku_ai MODULE src/bindings.cpp)
+    Python3_add_library(gomoku_ai MODULE src/ai/bindings.cpp)
     target_link_libraries(gomoku_ai PRIVATE pybind11::headers)
     set_target_properties(gomoku_ai PROPERTIES PREFIX "")
 endif()

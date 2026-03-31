@@ -269,18 +269,34 @@ RawModelResult queryModelMove(const gomoku::Board& board,
                               const std::string& preferred_python) {
     const auto bases = baseDirs(source_dir);
 
-    auto script = findFile(bases, "runModelAndReturnPoint.py");
-    if (!script) {
-        script = findFile(bases, "python/runModelAndReturnPoint.py");
+    std::optional<fs::path> script;
+    for (const auto* candidate : {
+             "python/inference/runModelAndReturnPoint.py",
+             "python/runModelAndReturnPoint.py",
+             "runModelAndReturnPoint.py"
+         }) {
+        script = findFile(bases, candidate);
+        if (script) {
+            break;
+        }
     }
     if (!script) {
         return {
             std::nullopt,
-            "runModelAndReturnPoint.py not found; searched: " + compactMessage(searchedPaths(bases, "runModelAndReturnPoint.py"), 260)
+            "runModelAndReturnPoint.py not found in expected paths: python/inference, python, project root"
         };
     }
 
-    auto model = findFile(bases, "gomoku_model.pt");
+    std::optional<fs::path> model;
+    for (const auto* candidate : {
+             "gomoku_model.pt",
+             "python/models/gomoku_model.pt"
+         }) {
+        model = findFile(bases, candidate);
+        if (model) {
+            break;
+        }
+    }
     if (!model) {
         return {
             std::nullopt,

@@ -9,4 +9,4 @@
  * - System Calls / Interactions: 
  * - Resource Impact: 
  */
-#include "../include/gomoku/webConnect.h"
+#include "gomoku/webConnect.h"

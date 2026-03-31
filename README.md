@@ -81,23 +81,25 @@ macOS / Linux：
 ## AI 模型說明
 
 - 預設模型檔路徑：專案根目錄 `gomoku_model.pt`
-- 推論腳本：`python/runModelAndReturnPoint.py`
+- 推論腳本：`python/inference/runModelAndReturnPoint.py`
 - `PvE` 模式中若模型或 Python 環境不可用，會自動 fallback 到合法步（遊戲可持續進行）
 - 失敗診斷會寫入 `ai_debug.log`
 
 ## 音效資源說明
 
-請保留 `voice/` 目錄與以下檔案：
+請保留 `assets/audio/` 目錄與以下檔案：
 
-- `voice/backGround.mp3`
-- `voice/click.mp3`
-- `voice/placeStoneVoice.mp3`
+- `assets/audio/backGround.mp3`
+- `assets/audio/click.mp3`
+- `assets/audio/placeStoneVoice.mp3`
 
 ## 專案結構
 
 ```text
 Gomoku/
 |-- CMakeLists.txt
+|-- docs/
+|   `-- scoring.md
 |-- include/gomoku/
 |   |-- engine.h
 |   |-- game_session.h
@@ -106,19 +108,33 @@ Gomoku/
 |   |-- voice.h
 |   `-- webConnect.h
 |-- src/
-|   |-- app.cpp
-|   |-- engine.cpp
-|   |-- game_session.cpp
-|   |-- ai_player.cpp
-|   |-- ui_controller.cpp
-|   |-- voice.cpp
-|   |-- webConnect.cpp
-|   `-- bindings.cpp
+|   |-- app/
+|   |   `-- app.cpp
+|   |-- core/
+|   |   |-- engine.cpp
+|   |   `-- game_session.cpp
+|   |-- ai/
+|   |   |-- ai_player.cpp
+|   |   `-- bindings.cpp
+|   |-- ui/
+|   |   `-- ui_controller.cpp
+|   |-- audio/
+|   |   `-- voice.cpp
+|   `-- net/
+|       `-- webConnect.cpp
 |-- python/
-|   |-- runModelAndReturnPoint.py
+|   |-- inference/
+|   |   `-- runModelAndReturnPoint.py
+|   |-- training/
+|   |   `-- processTrainModel.py
 |   |-- gomoku_net.py
 |   `-- ...
-|-- voice/
+|-- assets/
+|   `-- audio/
+|-- scripts/
+|-- tests/
+|   |-- cpp/
+|   `-- python/
 |-- requirements-ai-runtime.txt
 `-- gomoku_model.pt
 ```
