@@ -19,13 +19,9 @@ namespace gomoku {
 
         ~voice() = default;
 
-        voice(const voice &) = delete;
-
-        voice &operator=(const voice &) = delete;
-
-        voice(voice &&) noexcept = default;
-
-        voice &operator=(voice &&) noexcept = default;
+        void clickSound() const;
+        void backGroundMusic() const;
+        void placeStoneSound() const;
 
     private:
     };

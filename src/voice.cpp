@@ -10,3 +10,7 @@
  * - Resource Impact: 
  */
 #include "../include/gomoku/voice.h"
+#include "../include/gomoku/miniaudio.h"
+
+#define MINIAUDIO_IMPLEMENTATION
+
