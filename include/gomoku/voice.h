@@ -18,15 +18,20 @@ public:
 
     ~voice() = default;
 
-    bool initAudioSystem();
-    void cleanupAudioSystem();
+    static bool initAudioSystem();
 
-    void clickSound() const;
-    void backGroundMusic() const;
-    void placeStoneSound() const;
-    void stopBackgroundMusic() const;
+    static void cleanupAudioSystem();
+
+    static void clickSound();
+
+    static void backGroundMusic();
+
+    static void placeStoneSound();
+
+    static void stopBackgroundMusic();
 private:
 };
 
+extern voice gameVoice;
 
 #endif // voice_H

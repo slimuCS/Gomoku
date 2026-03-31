@@ -12,6 +12,7 @@
 
 #include "gomoku/game_session.h"
 #include "gomoku/ui_controller.h"
+#include "gomoku/voice.h"
 
 #ifdef GOMOKU_SOURCE_DIR
 constexpr auto kSourceDir = GOMOKU_SOURCE_DIR;
@@ -25,11 +26,16 @@ constexpr auto kPythonExecutable = GOMOKU_PYTHON_EXECUTABLE;
 constexpr const char* kPythonExecutable = "python";
 #endif
 
+
 int main() {
+
     gomoku::GameSession session(15, kSourceDir, kPythonExecutable);
     const UI::Controller controller(session);
 
+    gameVoice.backGroundMusic();
+
     controller.Start();
 
+    gameVoice.cleanupAudioSystem();
     return 0;
 }

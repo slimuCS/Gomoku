@@ -20,6 +20,7 @@ static ma_engine engine;
 static ma_sound g_bgm;
 static bool g_isInitalized = false;
 
+voice gameVoice;
 
 bool voice::initAudioSystem() {
     if (g_isInitalized) {
@@ -49,22 +50,22 @@ void voice::cleanupAudioSystem() {
     }
 }
 
-void voice::clickSound() const {
+void voice::clickSound() {
     if (!g_isInitalized) return;
     ma_engine_play_sound(&engine, "../voice/click.mp3", nullptr);
 }
 
-void voice::backGroundMusic() const {
+void voice::backGroundMusic() {
     if (!g_isInitalized) return;
     ma_engine_play_sound(&engine, "../voice/backGround.mp3", nullptr);
 }
 
-void voice::placeStoneSound() const {
+void voice::placeStoneSound() {
     if (!g_isInitalized) return;
     ma_engine_play_sound(&engine, "../voice/placeStoneVoice.mp3", nullptr);
 }
 
-void voice::stopBackgroundMusic() const {
+void voice::stopBackgroundMusic() {
     if (!g_isInitalized) return;
     ma_sound_stop(&g_bgm);
 }

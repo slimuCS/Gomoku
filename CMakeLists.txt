@@ -92,6 +92,8 @@ add_executable(Gomoku_Project
         src/ai_player.cpp
         src/game_session.cpp
         src/ui_controller.cpp
+        src/voice.cpp
+        src/webConnect.cpp
 )
 
 if(COMMAND pybind11_add_module)
