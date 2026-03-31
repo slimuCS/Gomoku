@@ -7,13 +7,13 @@
 #ifndef GOMOKU_UI_CONTROLLER_H
 #define GOMOKU_UI_CONTROLLER_H
 
-#include "engine.h"
+#include "game_session.h"
 #include <memory>
 
 namespace UI {
     class Controller {
     public:
-        explicit Controller(gomoku::Board& board);
+        explicit Controller(gomoku::GameSession& session);
         ~Controller();
         Controller(const Controller&) = delete;
         Controller& operator=(const Controller&) = delete;

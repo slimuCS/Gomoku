@@ -1,6 +1,5 @@
-﻿#include "gomoku/ui_controller.h"
+#include "gomoku/ui_controller.h"
 
-#include "gomoku/ai_player.h"
 #include "ftxui/component/component.hpp"
 #include "ftxui/component/component_base.hpp"
 #include "ftxui/component/event.hpp"
@@ -14,18 +13,6 @@
 #include <utility>
 #include <vector>
 
-#ifdef GOMOKU_SOURCE_DIR
-constexpr auto kSourceDir = GOMOKU_SOURCE_DIR;
-#else
-constexpr const char* kSourceDir = ".";
-#endif
-
-#ifdef GOMOKU_PYTHON_EXECUTABLE
-constexpr auto kPythonExecutable = GOMOKU_PYTHON_EXECUTABLE;
-#else
-constexpr const char* kPythonExecutable = "python";
-#endif
-
 namespace UI {
 using namespace ftxui;
 
@@ -35,12 +22,6 @@ constexpr int kMenuTab = 0;
 constexpr int kPvpTab = 1;
 constexpr int kPveTab = 2;
 constexpr int kResultTab = 3;
-constexpr int kDefaultBoardSize = 15;
-
-enum class GameMode {
-    Pvp,
-    Pve
-};
 
 class InteractiveBoard final : public ComponentBase {
 public:
@@ -101,11 +82,9 @@ struct Controller::Impl {
         ScreenInteractive screen = ScreenInteractive::Fullscreen();
     };
 
-    explicit Impl(gomoku::Board& game_board)
-        : board(game_board),
-          screen_state(std::make_unique<ScreenState>()),
-          ai_player(kSourceDir, kPythonExecutable),
-          board_size(std::max(1, game_board.getSize())) {
+    explicit Impl(gomoku::GameSession& game_session)
+        : session(game_session),
+          screen_state(std::make_unique<ScreenState>()) {
         backToMenu();
     }
 
@@ -121,37 +100,31 @@ struct Controller::Impl {
     }
 
     [[nodiscard]] int boardLimit() const {
-        return std::max(0, board.getSize() - 1);
+        return std::max(0, session.board().getSize() - 1);
     }
 
     void centerCursor() {
-        const int center = board.getSize() / 2;
+        const int center = session.board().getSize() / 2;
         current_x = center;
         current_y = center;
     }
 
-    void startGame(const GameMode next_mode) {
-        current_mode = next_mode;
-        board = gomoku::Board(board_size);
+    void startGame(const gomoku::SessionMode next_mode) {
+        session.start(next_mode);
         centerCursor();
-        ai_used_fallback = false;
 
-        if (current_mode == GameMode::Pve) {
+        if (next_mode == gomoku::SessionMode::PVE) {
             active_index = kPveTab;
-            ai_status_text = "AI: ready (model expected at gomoku_model.pt)";
         } else {
             active_index = kPvpTab;
-            ai_status_text = "AI: disabled in PvP";
         }
     }
 
     void backToMenu() {
-        board = gomoku::Board(board_size);
+        session.reset();
         active_index = kMenuTab;
         current_x = 0;
         current_y = 0;
-        ai_status_text = "AI: ready";
-        ai_used_fallback = false;
     }
 
     bool handleCursorMove(const Event& event) {
@@ -176,35 +149,19 @@ struct Controller::Impl {
     }
 
     void tryMoveToResult() {
-        if (board.getStatus() != gomoku::GameStatus::PLAYING) {
+        if (session.status() != gomoku::GameStatus::PLAYING) {
             active_index = kResultTab;
         }
     }
 
     bool runAiTurn() {
-        const auto [move, used_fallback, diagnostic] = ai_player.makeMove(board);
-        ai_used_fallback = used_fallback;
-
-        if (!move) {
-            ai_status_text = "AI failed: " + diagnostic;
+        if (!session.ai_move()) {
             return false;
         }
 
-        const auto [x, y] = *move;
-        if (!board.placeStone(x, y)) {
-            ai_status_text = "AI failed: suggested move is invalid";
-            ai_used_fallback = true;
-            return false;
-        }
-
-        current_x = x;
-        current_y = y;
-        ai_status_text = used_fallback
-            ? "AI(fallback): move (" + std::to_string(x) + "," + std::to_string(y) + ")"
-            : "AI(model): move (" + std::to_string(x) + "," + std::to_string(y) + ")";
-
-        if (used_fallback && !diagnostic.empty()) {
-            ai_status_text += " | reason: " + diagnostic;
+        if (const auto move = session.last_move()) {
+            current_x = move->first;
+            current_y = move->second;
         }
 
         tryMoveToResult();
@@ -230,11 +187,11 @@ struct Controller::Impl {
             }
 
             if (menu_selected == 0) {
-                startGame(GameMode::Pvp);
+                startGame(gomoku::SessionMode::PVP);
                 return true;
             }
             if (menu_selected == 1) {
-                startGame(GameMode::Pve);
+                startGame(gomoku::SessionMode::PVE);
                 return true;
             }
             if (menu_selected == 2) {
@@ -260,12 +217,12 @@ struct Controller::Impl {
                 return false;
             }
 
-            if (!board.placeStone(current_x, current_y)) {
+            if (!session.human_move(current_x, current_y)) {
                 return false;
             }
 
             tryMoveToResult();
-            if (has_ai && board.getStatus() == gomoku::GameStatus::PLAYING) {
+            if (has_ai && session.status() == gomoku::GameStatus::PLAYING) {
                 runAiTurn();
             }
 
@@ -278,14 +235,14 @@ struct Controller::Impl {
     Component renderEndPage() {
         auto container = Container::Vertical({
             Button("Back to menu", [this] { backToMenu(); }),
-            Button("Play again", [this] { startGame(current_mode); })
+            Button("Play again", [this] { startGame(session.mode()); })
         });
 
         return Renderer(container, [container, this] {
             return vbox({
                 text("Game Over") | hcenter | bold | color(Color::Red),
                 separator(),
-                text("Result: " + gameResultText(board.getStatus())) | hcenter | color(Color::Yellow),
+                text("Result: " + gameResultText(session.status())) | hcenter | color(Color::Yellow),
                 separator(),
                 container->Render() | hcenter
             }) | border | center;
@@ -293,15 +250,16 @@ struct Controller::Impl {
     }
 
     [[nodiscard]] Element renderGrid() const {
+        const auto& board = session.board();
         const bool is_black_turn = board.getCurrentPlayer() == gomoku::Stone::BLACK;
         auto status_bar = text(is_black_turn ? "Current player: Black" : "Current player: White") |
                           bold |
                           color(is_black_turn ? Color::Red : Color::White) |
                           hcenter;
 
-        auto ai_bar = text(ai_status_text) | hcenter;
+        auto ai_bar = text(session.ai_status_text()) | hcenter;
         if (active_index == kPveTab) {
-            ai_bar |= ai_used_fallback ? color(Color::Yellow) : color(Color::Green);
+            ai_bar |= session.ai_used_fallback() ? color(Color::Yellow) : color(Color::Green);
         } else {
             ai_bar |= dim;
         }
@@ -335,9 +293,8 @@ struct Controller::Impl {
         }) | border | center;
     }
 
-    gomoku::Board& board;
+    gomoku::GameSession& session;
     std::unique_ptr<ScreenState> screen_state;
-    gomoku::ai::Player ai_player;
 
     std::vector<std::string> menu_entries = {
         "Start Game (PvP)",
@@ -349,15 +306,10 @@ struct Controller::Impl {
     int active_index = kMenuTab;
     int current_x = 0;
     int current_y = 0;
-    int board_size = kDefaultBoardSize;
-
-    GameMode current_mode = GameMode::Pvp;
-    std::string ai_status_text = "AI: ready";
-    bool ai_used_fallback = false;
 };
 
-Controller::Controller(gomoku::Board& board)
-    : impl_(std::make_unique<Impl>(board)) {}
+Controller::Controller(gomoku::GameSession& session)
+    : impl_(std::make_unique<Impl>(session)) {}
 
 Controller::~Controller() = default;
 

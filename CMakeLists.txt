@@ -90,6 +90,7 @@ target_include_directories(gomoku_core PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/includ
 add_executable(Gomoku_Project
         src/app.cpp
         src/ai_player.cpp
+        src/game_session.cpp
         src/ui_controller.cpp
 )
 
