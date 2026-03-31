@@ -12,19 +12,21 @@
 #ifndef voice_H
 #define voice_H
 
-namespace gomoku {
-    class voice {
-    public:
-        explicit voice() = default;
+class voice {
+public:
+    explicit voice() = default;
 
-        ~voice() = default;
+    ~voice() = default;
 
-        void clickSound() const;
-        void backGroundMusic() const;
-        void placeStoneSound() const;
+    bool initAudioSystem();
+    void cleanupAudioSystem();
 
-    private:
-    };
-}
+    void clickSound() const;
+    void backGroundMusic() const;
+    void placeStoneSound() const;
+    void stopBackgroundMusic() const;
+private:
+};
+
 
 #endif // voice_H
