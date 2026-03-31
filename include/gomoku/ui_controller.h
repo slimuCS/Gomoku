@@ -9,47 +9,20 @@
 
 #include "engine.h"
 #include <memory>
-#include <string>
-#include <vector>
-
-
-
-namespace ftxui {
-    class ComponentBase;
-    class Node;
-    class Event;
-    using Component = std::shared_ptr<ComponentBase>;
-    using Element = std::shared_ptr<Node>;
-}
 
 namespace UI {
     class Controller {
     public:
         explicit Controller(gomoku::Board& board);
         ~Controller();
+        Controller(const Controller&) = delete;
+        Controller& operator=(const Controller&) = delete;
 
-        void Start();
+        void Start() const;
 
     private:
-        struct ScreenState;
-        gomoku::Board& board;
-        std::unique_ptr<ScreenState> screen_state;
-        std::vector<std::string> menu_entries = {"Start Game (PvP)", "Start Game (PvE)", "Exit"};
-
-        int menu_selected = 0;
-        int active_index = 0;
-        int current_x = 0;
-        int current_y = 0;
-        std::string ai_status_text = "AI: ready";
-        bool ai_used_fallback = false;
-
-        ftxui::Component RenderFrontPage();
-        ftxui::Component RenderGameBoard(bool has_ai);
-        ftxui::Component RenderEndPage();
-
-        bool HandleMove(const ftxui::Event& event);
-
-        [[nodiscard]] ftxui::Element RenderGrid() const;
+        struct Impl;
+        std::unique_ptr<Impl> impl_;
     };
 }
 

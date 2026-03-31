@@ -143,7 +143,7 @@ PYBIND11_MODULE(gomoku_ai, m) {
                 return std::clamp(score, 0.0f, 1.0f);
             };
 
-            const auto plane_value = [&](int x, int y) {
+            const auto plane_value = [&](const int x, const int y) {
                 if constexpr (!kUseThreatPlane) {
                     return kGlobalPlaneValue;
                 }
