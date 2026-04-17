@@ -55,6 +55,18 @@ namespace gomoku {
         return true;
     }
 
+    bool Board::undoStone(const int x, const int y) {
+        if (x < 0 || x >= size_ || y < 0 || y >= size_)
+            return false;
+        const int index = y * size_ + x;
+        if (grid_[index] == Stone::EMPTY)
+            return false;
+        current_player_ = grid_[index];
+        grid_[index] = Stone::EMPTY;
+        status_ = GameStatus::PLAYING;
+        return true;
+    }
+
     Stone Board::getStone(const int x, const int y) const {
         if (x < 0 || x >= size_ || y < 0 || y >= size_)
             return Stone::EMPTY;

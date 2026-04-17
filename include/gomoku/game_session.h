@@ -13,6 +13,7 @@
 #include <optional>
 #include <string>
 #include <utility>
+#include <vector>
 
 namespace gomoku {
 
@@ -39,6 +40,9 @@ public:
     [[nodiscard]] const std::string& ai_status_text() const;
     [[nodiscard]] bool ai_used_fallback() const;
     [[nodiscard]] std::optional<std::pair<int, int>> last_move() const;
+    [[nodiscard]] const std::vector<std::pair<int, int>>& move_history() const;
+
+    bool undo();
 
 private:
     int board_size_ = 15;
@@ -48,6 +52,7 @@ private:
     std::string ai_status_text_ = "AI: disabled in PvP";
     bool ai_used_fallback_ = false;
     std::optional<std::pair<int, int>> last_move_;
+    std::vector<std::pair<int, int>> move_history_;
 };
 
 } // namespace gomoku

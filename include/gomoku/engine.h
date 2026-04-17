@@ -35,6 +35,9 @@ namespace gomoku {
         // Place a stone for the current player and auto-transition state.
         bool placeStone(int x, int y);
 
+        // Remove the stone at (x,y) and restore turn/status to PLAYING.
+        bool undoStone(int x, int y);
+
         [[nodiscard]] Stone getStone(int x, int y) const;
         [[nodiscard]] Stone getCurrentPlayer() const;
         [[nodiscard]] GameStatus getStatus() const;

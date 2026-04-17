@@ -197,6 +197,7 @@ struct Controller::Impl {
                 return true;
             }
             if (menu_selected == 2) {
+                previous_tab = kMenuTab;
                 active_index = kSettingsTab;
                 return true;
             }
@@ -216,6 +217,19 @@ struct Controller::Impl {
         component->render_logic = [this] { return renderGrid(); };
         component->event_logic = [this, has_ai](const Event& event) {
             if (handleCursorMove(event)) {
+                return true;
+            }
+
+            if (event == Event::Character('s') || event == Event::Character('S')) {
+                previous_tab = active_index;
+                active_index = kSettingsTab;
+                return true;
+            }
+
+            if (event == Event::Character('u') || event == Event::Character('U')) {
+                if (settings_undo_enabled) {
+                    session.undo();
+                }
                 return true;
             }
 
@@ -239,13 +253,24 @@ struct Controller::Impl {
     }
 
     Component renderSettingsPage() {
-        auto undo_checkbox  = Checkbox("Undo", &settings_undo_enabled);
-        auto timer_checkbox = Checkbox("Move Timer", &settings_timer_enabled);
-        ButtonOption plain;
-        plain.transform = [](const EntryState& s) {
-            return text(s.label) | (s.focused ? bold : dim);
+        CheckboxOption cb_opt;
+        cb_opt.transform = [](const EntryState& s) {
+            auto prefix = text(s.state ? "[x] " : "[ ] ");
+            auto label  = text(s.label);
+            if (s.focused) { prefix |= inverted; label |= inverted; }
+            return hbox({prefix, label}) | flex;
         };
-        auto back_button = Button("Back", [this] { active_index = kMenuTab; }, plain);
+
+        auto undo_checkbox  = Checkbox("Undo", &settings_undo_enabled, cb_opt);
+        auto timer_checkbox = Checkbox("Move Timer", &settings_timer_enabled, cb_opt);
+
+        ButtonOption btn_opt;
+        btn_opt.transform = [](const EntryState& s) {
+            auto e = text(s.label) | flex;
+            if (s.focused) e |= inverted;
+            return e;
+        };
+        auto back_button = Button("Back", [this] { active_index = previous_tab; }, btn_opt);
 
         auto checkboxes = Container::Vertical({ undo_checkbox, timer_checkbox });
         auto container  = Container::Vertical({ checkboxes, back_button });
@@ -254,9 +279,9 @@ struct Controller::Impl {
             return vbox({
                 text("Settings") | hcenter | bold | color(Color::Cyan),
                 separator(),
-                checkboxes->Render() | hcenter,
+                checkboxes->Render(),
                 separator(),
-                back_button->Render() | hcenter
+                back_button->Render()
             }) | border | center;
         });
     }
@@ -317,7 +342,7 @@ struct Controller::Impl {
         auto bottom_bar = hbox({
             text(" [Setting(S)] ") | bold,
             filler(),
-            text(" [Undo(U)] ") | bold,
+            text(" [Undo(U)] ") | (settings_undo_enabled ? bold : dim),
             filler(),
             text(" [Save/Leave(L)] ") | bold,
         });
@@ -344,6 +369,7 @@ struct Controller::Impl {
 
     int menu_selected = 0;
     int active_index = kMenuTab;
+    int previous_tab = kMenuTab;
     int current_x = 0;
     int current_y = 0;
 

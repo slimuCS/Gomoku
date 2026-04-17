@@ -23,6 +23,7 @@ void GameSession::start(const SessionMode next_mode) {
 void GameSession::reset() {
     board_ = Board(board_size_);
     last_move_.reset();
+    move_history_.clear();
     ai_used_fallback_ = false;
 
     if (mode_ == SessionMode::PVE) {
@@ -46,6 +47,7 @@ bool GameSession::human_move(const int x, const int y) {
     }
 
     last_move_ = std::pair{x, y};
+    move_history_.emplace_back(x, y);
     return true;
 }
 
@@ -75,6 +77,7 @@ bool GameSession::ai_move() {
     }
 
     last_move_ = std::pair{x, y};
+    move_history_.emplace_back(x, y);
     ai_status_text_ = used_fallback
         ? "AI(fallback): move (" + std::to_string(x) + "," + std::to_string(y) + ")"
         : "AI(model): move (" + std::to_string(x) + "," + std::to_string(y) + ")";
@@ -108,6 +111,33 @@ bool GameSession::ai_used_fallback() const {
 
 std::optional<std::pair<int, int>> GameSession::last_move() const {
     return last_move_;
+}
+
+const std::vector<std::pair<int, int>>& GameSession::move_history() const {
+    return move_history_;
+}
+
+bool GameSession::undo() {
+    if (move_history_.empty()) return false;
+
+    if (mode_ == SessionMode::PVP) {
+        const auto [x, y] = move_history_.back();
+        move_history_.pop_back();
+        board_.undoStone(x, y);
+    } else {
+        // PvE: undo steps until it is human (BLACK)'s turn, max 2 steps
+        for (int i = 0; i < 2 && !move_history_.empty(); ++i) {
+            const auto [x, y] = move_history_.back();
+            move_history_.pop_back();
+            board_.undoStone(x, y);
+            if (board_.getCurrentPlayer() == Stone::BLACK) break;
+        }
+    }
+
+    last_move_ = move_history_.empty()
+        ? std::nullopt
+        : std::optional{move_history_.back()};
+    return true;
 }
 
 } // namespace gomoku
