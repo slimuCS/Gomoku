@@ -22,6 +22,7 @@ constexpr int kMenuTab = 0;
 constexpr int kPvpTab = 1;
 constexpr int kPveTab = 2;
 constexpr int kResultTab = 3;
+constexpr int kSettingsTab = 4;
 
 class InteractiveBoard final : public ComponentBase {
 public:
@@ -93,7 +94,8 @@ struct Controller::Impl {
             renderFrontPage(),
             renderGameBoard(false),
             renderGameBoard(true),
-            renderEndPage()
+            renderEndPage(),
+            renderSettingsPage()
         }, &active_index);
 
         screen_state->screen.Loop(container);
@@ -195,6 +197,10 @@ struct Controller::Impl {
                 return true;
             }
             if (menu_selected == 2) {
+                active_index = kSettingsTab;
+                return true;
+            }
+            if (menu_selected == 3) {
                 screen_state->screen.Exit();
                 return true;
             }
@@ -230,6 +236,29 @@ struct Controller::Impl {
         };
 
         return component;
+    }
+
+    Component renderSettingsPage() {
+        auto undo_checkbox  = Checkbox("Undo", &settings_undo_enabled);
+        auto timer_checkbox = Checkbox("Move Timer", &settings_timer_enabled);
+        ButtonOption plain;
+        plain.transform = [](const EntryState& s) {
+            return text(s.label) | (s.focused ? bold : dim);
+        };
+        auto back_button = Button("Back", [this] { active_index = kMenuTab; }, plain);
+
+        auto checkboxes = Container::Vertical({ undo_checkbox, timer_checkbox });
+        auto container  = Container::Vertical({ checkboxes, back_button });
+
+        return Renderer(container, [checkboxes, back_button] {
+            return vbox({
+                text("Settings") | hcenter | bold | color(Color::Cyan),
+                separator(),
+                checkboxes->Render() | hcenter,
+                separator(),
+                back_button->Render() | hcenter
+            }) | border | center;
+        });
     }
 
     Component renderEndPage() {
@@ -285,11 +314,21 @@ struct Controller::Impl {
             rows.push_back(hbox(std::move(columns)));
         }
 
+        auto bottom_bar = hbox({
+            text(" [Setting(S)] ") | bold,
+            filler(),
+            text(" [Undo(U)] ") | bold,
+            filler(),
+            text(" [Save/Leave(L)] ") | bold,
+        });
+
         return vbox({
             status_bar,
             ai_bar,
             separator(),
-            vbox(std::move(rows)) | hcenter
+            vbox(std::move(rows)) | hcenter,
+            separator(),
+            bottom_bar
         }) | border | center;
     }
 
@@ -299,6 +338,7 @@ struct Controller::Impl {
     std::vector<std::string> menu_entries = {
         "Start Game (PvP)",
         "Start Game (PvE)",
+        "Settings",
         "Exit"
     };
 
@@ -306,6 +346,10 @@ struct Controller::Impl {
     int active_index = kMenuTab;
     int current_x = 0;
     int current_y = 0;
+
+    // Settings state (wired up in Phase C / Phase F)
+    bool settings_undo_enabled  = true;
+    bool settings_timer_enabled = false;
 };
 
 Controller::Controller(gomoku::GameSession& session)

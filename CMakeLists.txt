@@ -83,8 +83,13 @@ FetchContent_Declare(ftxui
 )
 FetchContent_MakeAvailable(ftxui)
 
-add_library(gomoku_core STATIC src/core/engine.cpp)
+# voice.cpp is included here because engine.cpp calls voice::placeStoneSound().
+# Without it, gomoku_ai (pybind11 module) fails to link with LNK2019.
+# TODO: consider moving audio calls out of engine.cpp to keep core logic I/O-free.
+add_library(gomoku_core STATIC src/core/engine.cpp src/audio/voice.cpp)
 target_include_directories(gomoku_core PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
+# voice.cpp references GOMOKU_SOURCE_DIR to locate audio asset files at runtime.
+target_compile_definitions(gomoku_core PRIVATE GOMOKU_SOURCE_DIR="${CMAKE_CURRENT_SOURCE_DIR}")
 
 
 add_executable(Gomoku_Project
