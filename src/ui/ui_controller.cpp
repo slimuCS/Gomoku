@@ -13,6 +13,7 @@
 #include <functional>
 #include <memory>
 #include <string>
+#include <optional>
 #include <thread>
 #include <unordered_map>
 #include <utility>
@@ -27,7 +28,7 @@ constexpr int kMenuTab = 0;
 constexpr int kPvpTab = 1;
 constexpr int kPveTab = 2;
 constexpr int kResultTab = 3;
-constexpr int kSettingsTab = 4;
+constexpr int kSetupTab    = 4;
 constexpr int kLoadTab   = 5;
 constexpr int kReplayTab = 6;
 
@@ -107,7 +108,7 @@ struct Controller::Impl {
             renderGameBoard(false),
             renderGameBoard(true),
             renderEndPage(),
-            renderSettingsPage(),
+            renderSetupPage(),
             renderLoadGamePage(),
             renderReplayPage()
         }, &active_index);
@@ -310,6 +311,7 @@ struct Controller::Impl {
             }
             if (event == Event::Escape) {
                 stopReplayAuto();
+                result_selected_ = 0;
                 active_index = kResultTab;
                 return true;
             }
@@ -406,6 +408,7 @@ struct Controller::Impl {
                     centerCursor();
                     active_index = (session.mode() == gomoku::SessionMode::PVE) ? kPveTab : kPvpTab;
                     if (session.status() != gomoku::GameStatus::PLAYING) {
+                        result_selected_ = 0;
                         active_index = kResultTab;
                     }
                 }
@@ -440,7 +443,9 @@ struct Controller::Impl {
                     backToMenu();
                     break;
                 case 1: // Save
-                    session.serialize();
+                    if (!session.serialize().empty()) {
+                        setStatusMsg("Game saved!", 1500);
+                    }
                     show_save_menu_ = false;
                     break;
                 case 2: // Leave
@@ -479,6 +484,7 @@ struct Controller::Impl {
 
     void tryMoveToResult() {
         if (session.status() != gomoku::GameStatus::PLAYING) {
+            result_selected_ = 0;
             active_index = kResultTab;
         }
     }
@@ -495,6 +501,18 @@ struct Controller::Impl {
 
         tryMoveToResult();
         return true;
+    }
+
+    void setStatusMsg(const std::string& msg, int ms = 1500) {
+        status_msg_ = msg;
+        status_msg_until_ = std::chrono::steady_clock::now() + std::chrono::milliseconds(ms);
+    }
+
+    [[nodiscard]] std::string activeStatusMsg() const {
+        if (!status_msg_.empty() && std::chrono::steady_clock::now() < status_msg_until_) {
+            return status_msg_;
+        }
+        return {};
     }
 
     Component renderFrontPage() {
@@ -516,16 +534,24 @@ struct Controller::Impl {
             }
 
             if (menu_selected == 0) {
-                startGame(gomoku::SessionMode::PVP);
+                pending_mode_ = gomoku::SessionMode::PVP;
+                settings_focus_ = 1;
+                previous_tab = kMenuTab;
+                active_index = kSetupTab;
                 return true;
             }
             if (menu_selected == 1) {
-                startGame(gomoku::SessionMode::PVE);
+                pending_mode_ = gomoku::SessionMode::PVE;
+                settings_focus_ = 1;
+                previous_tab = kMenuTab;
+                active_index = kSetupTab;
                 return true;
             }
             if (menu_selected == 2) {
+                pending_mode_.reset();
+                settings_focus_ = 0;
                 previous_tab = kMenuTab;
-                active_index = kSettingsTab;
+                active_index = kSetupTab;
                 return true;
             }
             if (menu_selected == 3) {
@@ -576,14 +602,20 @@ struct Controller::Impl {
             }
 
             if (event == Event::Character('s') || event == Event::Character('S')) {
+                pending_mode_.reset();
+                settings_focus_ = 0;
                 previous_tab = active_index;
-                active_index = kSettingsTab;
+                active_index = kSetupTab;
                 return true;
             }
 
             if (event == Event::Character('u') || event == Event::Character('U')) {
-                if (settings_undo_enabled) {
-                    session.undo();
+                if (!settings_undo_enabled) {
+                    setStatusMsg("Undo is disabled (enable in Setup)", 2000);
+                } else if (!session.undo()) {
+                    setStatusMsg("No moves to undo", 1500);
+                } else {
+                    setStatusMsg("Move undone", 1000);
                     if (settings_timer_enabled &&
                         session.status() == gomoku::GameStatus::PLAYING) {
                         startTimer();
@@ -597,7 +629,8 @@ struct Controller::Impl {
             }
 
             if (!session.human_move(current_x, current_y)) {
-                return false;
+                setStatusMsg("Cell already occupied", 1500);
+                return true;
             }
 
             consecutive_timeouts_ = 0;
@@ -616,7 +649,7 @@ struct Controller::Impl {
         return component;
     }
 
-    Component renderSettingsPage() {
+    Component renderSetupPage() {
         CheckboxOption cb_opt;
         cb_opt.transform = [](const EntryState& s) {
             auto prefix = text(s.state ? "[x] " : "[ ] ");
@@ -626,7 +659,7 @@ struct Controller::Impl {
         };
 
         auto undo_checkbox  = Checkbox("Undo", &settings_undo_enabled, cb_opt);
-        auto timer_checkbox = Checkbox("Move Timer", &settings_timer_enabled, cb_opt);
+        auto timer_checkbox = Checkbox("Time Limit", &settings_timer_enabled, cb_opt);
 
         InputOption inp_opt = InputOption::Default();
         inp_opt.on_change = [this] {
@@ -645,47 +678,102 @@ struct Controller::Impl {
             if (s.focused) e |= inverted;
             return e;
         };
-        auto back_button = Button("Back", [this] { active_index = previous_tab; }, btn_opt);
+        auto back_button = Button("Ok", [this] {
+            if (pending_mode_.has_value()) {
+                auto mode = *pending_mode_;
+                pending_mode_.reset();
+                startGame(mode);
+            } else {
+                active_index = previous_tab;
+            }
+        }, btn_opt);
 
         auto checkboxes = Container::Vertical({ undo_checkbox, timer_checkbox, timer_input });
-        auto container  = Container::Vertical({ checkboxes, back_button });
+        auto container  = Container::Vertical({ checkboxes, back_button }, &settings_focus_);
 
         return Renderer(container, [this, undo_checkbox, timer_checkbox, timer_input, back_button] {
             auto timer_row = hbox({
-                text("  Duration: "),
-                timer_input->Render() | size(WIDTH, EQUAL, 6),
-                text(" seconds")
+                text("    "),
+                timer_input->Render() | size(WIDTH, EQUAL, 4),
+                text(" sec")
             });
             if (!settings_timer_enabled) timer_row = timer_row | dim;
 
-            return vbox({
-                text("Settings") | hcenter | bold | color(Color::Cyan),
-                separator(),
+            auto how_to_play = vbox({
+                text("\u2500\u2500 How to Play \u2500\u2500") | bold | color(Color::Cyan),
+                text("\u00b7 Get 5 in a row to win") | dim,
+                text("  (horizontal / vertical / diagonal)") | dim,
+                text("\u00b7 Black \u25cb goes first, alternate") | dim,
+                text(""),
+                text("\u2191\u2193\u2190\u2192 Move   Enter/Space Place") | dim,
+                text("U Undo   S Setup   L Save/Leave") | dim,
+            });
+
+            auto setup_box = vbox({
+                text("\u2500\u2500 Setup \u2500\u2500") | bold | color(Color::Cyan),
                 undo_checkbox->Render(),
-                timer_checkbox->Render(),
-                timer_row,
+                hbox({ timer_checkbox->Render(), timer_row }),
+            });
+
+            auto settings_box = vbox({
+                text("Briefing") | hcenter | bold | color(Color::Cyan),
+                separator(),
+                how_to_play,
+                separator(),
+                setup_box,
                 separator(),
                 back_button->Render()
             }) | border | center;
+
+            return dbox({ renderGrid(), settings_box | clear_under | center });
         });
     }
 
     Component renderEndPage() {
-        auto container = Container::Vertical({
-            Button("Back to menu", [this] { backToMenu(); }),
-            Button("Play again",   [this] { startGame(session.mode()); }),
-            Button("View Replay",  [this] { enterReplay(); })
-        });
+        auto component = std::make_shared<InteractiveBoard>();
 
-        return Renderer(container, [container, this] {
-            return vbox({
+        component->render_logic = [this] {
+            const std::vector<std::string> result_labels = {
+                "Back to menu", "Play again", "View Replay"
+            };
+            Elements items;
+            for (int i = 0; i < static_cast<int>(result_labels.size()); ++i) {
+                auto item = text("  " + result_labels[i] + "  ");
+                if (i == result_selected_) item |= inverted;
+                items.push_back(std::move(item));
+            }
+            auto result_box = vbox({
                 text("Game Over") | hcenter | bold | color(Color::Red),
                 separator(),
                 text("Result: " + gameResultText(session.status())) | hcenter | color(Color::Yellow),
                 separator(),
-                container->Render() | hcenter
+                vbox(std::move(items)),
+                separator(),
+                text("↑↓ Move  Enter Confirm") | dim | hcenter
             }) | border | center;
-        });
+            return dbox({ renderGrid(), result_box | clear_under | center });
+        };
+
+        component->event_logic = [this](const Event& event) {
+            constexpr int kNumOptions = 3;
+            if (event == Event::ArrowUp) {
+                result_selected_ = (result_selected_ - 1 + kNumOptions) % kNumOptions;
+                return true;
+            }
+            if (event == Event::ArrowDown) {
+                result_selected_ = (result_selected_ + 1) % kNumOptions;
+                return true;
+            }
+            if (event == Event::Return) {
+                if (result_selected_ == 0) backToMenu();
+                else if (result_selected_ == 1) startGame(session.mode());
+                else enterReplay();
+                return true;
+            }
+            return false;
+        };
+
+        return component;
     }
 
     [[nodiscard]] Element renderGrid() const {
@@ -721,17 +809,23 @@ struct Controller::Impl {
 
         Elements rows;
         const int size = board.getSize();
+        const bool in_game = (active_index == kPvpTab || active_index == kPveTab);
+        const auto last_mv = session.last_move();
         for (int y = 0; y < size; ++y) {
             Elements columns;
             for (int x = 0; x < size; ++x) {
                 const auto stone = board.getStone(x, y);
                 auto cell = stoneCellElement(stone);
 
-                if (x == current_x && y == current_y) {
+                const bool is_last_move = last_mv.has_value() && last_mv->first == x && last_mv->second == y;
+
+                if (x == current_x && y == current_y && !show_save_menu_ && in_game) {
+                    cell |= bgcolor(Color::Blue);
+                } else if (is_last_move && in_game) {
                     if (stone == gomoku::Stone::WHITE) {
-                        cell |= underlined;
+                        cell |= bgcolor(Color::GrayDark) | underlined;
                     } else {
-                        cell |= bgcolor(Color::Blue);
+                        cell |= bgcolor(Color::GrayDark);
                     }
                 }
 
@@ -740,8 +834,21 @@ struct Controller::Impl {
             rows.push_back(hbox(std::move(columns)));
         }
 
+        // Hint line: urgent timer > timed status message > default controls
+        Element hint_line;
+        if (settings_timer_enabled && timer_remaining_ > 0 && timer_remaining_ <= 3) {
+            hint_line = text("  Hurry up!  ") | bold | color(Color::Red) | hcenter;
+        } else {
+            const auto msg = activeStatusMsg();
+            if (!msg.empty()) {
+                hint_line = text("  " + msg + "  ") | color(Color::Yellow) | hcenter;
+            } else {
+                hint_line = text("↑↓←→ Move  Enter/Space Place  |  S Setup  U Undo  L Save") | dim | hcenter;
+            }
+        }
+
         auto bottom_bar = hbox({
-            text(" [Setting(S)] ") | bold,
+            text(" [Setup(S)] ") | bold,
             filler(),
             text(" [Undo(U)] ") | (settings_undo_enabled ? bold : dim),
             filler(),
@@ -755,6 +862,7 @@ struct Controller::Impl {
             separator(),
             vbox(std::move(rows)) | hcenter,
             separator(),
+            hint_line,
             bottom_bar
         }) | border | center;
 
@@ -786,7 +894,7 @@ struct Controller::Impl {
             text("↑↓ Move  Enter Confirm  Esc Cancel") | dim | hcenter
         }) | border | bgcolor(Color::Black) | center;
 
-        return dbox({ board_element, overlay | center });
+        return dbox({ board_element, overlay | clear_under | center });
     }
 
     gomoku::GameSession& session;
@@ -795,7 +903,7 @@ struct Controller::Impl {
     std::vector<std::string> menu_entries = {
         "Start Game (PvP)",
         "Start Game (PvE)",
-        "Settings",
+        "Setup",
         "Load Game",
         "Exit"
     };
@@ -806,9 +914,11 @@ struct Controller::Impl {
     int current_x = 0;
     int current_y = 0;
 
-    // Settings state (wired up in Phase C / Phase F)
+    // Setup state (wired up in Phase C / Phase F)
     bool settings_undo_enabled  = true;
     bool settings_timer_enabled = false;
+    int  settings_focus_        = 0;
+    std::optional<gomoku::SessionMode> pending_mode_;
 
     // Move timer state
     std::string         settings_timer_seconds_str_ = "20";
@@ -820,6 +930,11 @@ struct Controller::Impl {
     // Save/Leave submenu state
     bool show_save_menu_     = false;
     int  save_menu_selected_ = 0;
+    int  result_selected_    = 0;
+
+    // Status hint message (transient, time-based)
+    std::string status_msg_;
+    std::chrono::steady_clock::time_point status_msg_until_{};
 
     // Load Game page state
     std::vector<std::string> save_files_;
