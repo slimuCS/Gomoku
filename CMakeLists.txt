@@ -19,10 +19,13 @@ else()
 endif()
 
 find_package(Python3 3.13 COMPONENTS Interpreter Development REQUIRED)
-file(TO_CMAKE_PATH "${Python3_EXECUTABLE}" PYTHON_EXECUTABLE_FOR_CPP)
 set(PYBIND11_FINDPYTHON ON)
 
 include(FetchContent)
+set(FETCHCONTENT_FULLY_DISCONNECTED ON)
+set(FETCHCONTENT_UPDATES_DISCONNECTED ON)
+set(FETCHCONTENT_UPDATES_DISCONNECTED_FTXUI ON)
+set(FETCHCONTENT_UPDATES_DISCONNECTED_PYBIND11 ON)
 
 execute_process(
         COMMAND "${Python3_EXECUTABLE}" -m pybind11 --cmakedir
@@ -123,17 +126,25 @@ set_target_properties(gomoku_ai PROPERTIES
 target_include_directories(Gomoku_Project PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
 target_compile_definitions(Gomoku_Project PRIVATE
         GOMOKU_SOURCE_DIR="${CMAKE_CURRENT_SOURCE_DIR}"
-        GOMOKU_PYTHON_EXECUTABLE="${PYTHON_EXECUTABLE_FOR_CPP}"
 )
 
 target_link_libraries(Gomoku_Project PRIVATE
         ftxui::component
         ftxui::dom
         ftxui::screen
-        pybind11::module
         gomoku_core
 )
 
 if(WIN32)
     target_link_libraries(Gomoku_Project PRIVATE ws2_32)
 endif()
+
+enable_testing()
+
+add_executable(gomoku_reward_ai_tests
+        tests/cpp/reward_ai_smoke.cpp
+        src/ai/ai_player.cpp
+)
+target_include_directories(gomoku_reward_ai_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
+target_link_libraries(gomoku_reward_ai_tests PRIVATE gomoku_core)
+add_test(NAME gomoku_reward_ai_tests COMMAND gomoku_reward_ai_tests)

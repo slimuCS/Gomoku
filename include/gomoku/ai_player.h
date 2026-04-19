@@ -17,13 +17,9 @@ struct MoveResult {
 
 class Player {
 public:
-    Player(std::string source_dir, std::string preferred_python);
+    Player() = default;
 
     [[nodiscard]] MoveResult makeMove(const Board& board) const;
-
-private:
-    std::string source_dir_;
-    std::string preferred_python_;
 };
 
 } // namespace gomoku::ai

@@ -14,22 +14,8 @@
 #include "gomoku/ui_controller.h"
 #include "gomoku/voice.h"
 
-#ifdef GOMOKU_SOURCE_DIR
-constexpr auto kSourceDir = GOMOKU_SOURCE_DIR;
-#else
-constexpr const char* kSourceDir = ".";
-#endif
-
-#ifdef GOMOKU_PYTHON_EXECUTABLE
-constexpr auto kPythonExecutable = GOMOKU_PYTHON_EXECUTABLE;
-#else
-constexpr const char* kPythonExecutable = "python";
-#endif
-
-
 int main() {
-
-    gomoku::GameSession session(15, kSourceDir, kPythonExecutable);
+    gomoku::GameSession session(15);
     const UI::Controller controller(session);
 
     gameVoice.initAudioSystem();

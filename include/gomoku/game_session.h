@@ -25,8 +25,6 @@ enum class SessionMode : uint8_t {
 class GameSession {
 public:
     explicit GameSession(int board_size = 15,
-                         std::string source_dir = ".",
-                         std::string preferred_python = "python",
                          std::string saves_dir = "");
 
     void start(SessionMode next_mode);

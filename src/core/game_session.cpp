@@ -13,12 +13,9 @@
 namespace gomoku {
 
 GameSession::GameSession(const int board_size,
-                         std::string source_dir,
-                         std::string preferred_python,
                          std::string saves_dir)
     : board_size_(std::max(1, board_size)),
       board_(board_size_),
-      ai_player_(std::move(source_dir), std::move(preferred_python)),
       saves_dir_(saves_dir.empty() ? "saves" : std::move(saves_dir)) {
     reset();
 }
@@ -35,7 +32,7 @@ void GameSession::reset() {
     ai_used_fallback_ = false;
 
     if (mode_ == SessionMode::PVE) {
-        ai_status_text_ = "AI: ready (model expected at python/models/az_prompt_smoke/gomoku_model.pt)";
+        ai_status_text_ = "AI: ready (C++ reward engine)";
     } else {
         ai_status_text_ = "AI: disabled in PvP";
     }
@@ -86,12 +83,10 @@ bool GameSession::ai_move() {
 
     last_move_ = std::pair{x, y};
     move_history_.emplace_back(x, y);
-    ai_status_text_ = used_fallback
-        ? "AI(fallback): move (" + std::to_string(x) + "," + std::to_string(y) + ")"
-        : "AI(model): move (" + std::to_string(x) + "," + std::to_string(y) + ")";
+    ai_status_text_ = "AI(reward): move (" + std::to_string(x) + "," + std::to_string(y) + ")";
 
-    if (used_fallback && !diagnostic.empty()) {
-        ai_status_text_ += " | reason: " + diagnostic;
+    if (!diagnostic.empty()) {
+        ai_status_text_ += " | " + diagnostic;
     }
 
     return true;
@@ -186,7 +181,7 @@ bool GameSession::deserialize(const std::string& filepath) {
         : std::optional{move_history_.back()};
 
     ai_status_text_ = (mode_ == SessionMode::PVE)
-        ? "AI: ready (model expected at python/models/az_prompt_smoke/gomoku_model.pt)"
+        ? "AI: ready (C++ reward engine)"
         : "AI: disabled in PvP";
     return true;
 }

@@ -1,482 +1,380 @@
 #include "gomoku/ai_player.h"
 
-#include <algorithm>
 #include <array>
-#include <cctype>
-#include <cstdio>
-#include <cstdlib>
-#include <filesystem>
+#include <cmath>
+#include <limits>
 #include <optional>
 #include <sstream>
 #include <string>
-#include <vector>
-#if defined(_WIN32)
-#include <windows.h>
-#endif
+#include <utility>
 
 namespace gomoku::ai {
-namespace fs = std::filesystem;
-
 namespace {
 
-char stoneChar(const gomoku::Stone stone) {
-    if (stone == gomoku::Stone::BLACK) {
-        return 'B';
-    }
-    if (stone == gomoku::Stone::WHITE) {
-        return 'W';
-    }
-    return '.';
-}
+constexpr std::array<std::pair<int, int>, 4> kDirections{{
+    {1, 0},
+    {0, 1},
+    {1, 1},
+    {1, -1}
+}};
 
-std::string quoteArg(const std::string& value) {
-    std::string out = "\"";
-    for (const char ch : value) {
-        if (ch == '"') {
-            out += "\\\"";
-        } else {
-            out += ch;
-        }
-    }
-    return out + "\"";
-}
+constexpr double kScoreEpsilon = 1e-6;
 
-std::string compactMessage(const std::string& text, const size_t max_len = 180) {
-    std::string out;
-    bool has_space = false;
-    for (const char ch : text) {
-        if (std::isspace(static_cast<unsigned char>(ch))) {
-            if (!has_space && !out.empty()) {
-                out += ' ';
-            }
-            has_space = true;
-            continue;
-        }
-        out += ch;
-        has_space = false;
-    }
-
-    if (out.size() <= max_len) {
-        return out;
-    }
-    return out.substr(0, max_len - 3) + "...";
-}
-
-fs::path executableDir() {
-#if defined(_WIN32)
-    std::array<char, 4096> buffer{};
-    if (const DWORD size = GetModuleFileNameA(nullptr, buffer.data(), static_cast<DWORD>(buffer.size())); size > 0 && size < buffer.size()) {
-        return fs::path(std::string(buffer.data(), size)).parent_path();
-    }
-#endif
-
-    std::error_code ec;
-    return fs::current_path(ec);
-}
-
-std::vector<fs::path> baseDirs(const std::string& source_dir) {
-    std::vector<fs::path> paths;
-    const auto add = [&paths](fs::path value) {
-        std::error_code ec;
-        value = fs::absolute(value, ec).lexically_normal();
-        const auto key = value.generic_string();
-        for (const auto& existing : paths) {
-            if (existing.generic_string() == key) {
-                return;
-            }
-        }
-        paths.push_back(std::move(value));
-    };
-
-    const fs::path exe_dir = executableDir();
-    add(source_dir);
-    add(exe_dir);
-    add(exe_dir.parent_path());
-    add(fs::current_path());
-    add(fs::current_path().parent_path());
-    return paths;
-}
-
-std::optional<fs::path> findFile(const std::vector<fs::path>& bases, const std::string& name) {
-    for (const auto& base : bases) {
-        const auto candidate = (base / name).lexically_normal();
-        if (std::error_code ec; fs::exists(candidate, ec) && fs::is_regular_file(candidate, ec)) {
-            return candidate;
-        }
-    }
-    return std::nullopt;
-}
-
-std::string searchedPaths(const std::vector<fs::path>& bases, const std::string& name) {
-    std::string output;
-    for (const auto& base : bases) {
-        if (!output.empty()) {
-            output += ", ";
-        }
-        output += (base / name).generic_string();
-    }
-    return output;
-}
-
-void writeDebugLog(const std::string& source_dir, const std::string& content) {
-    std::error_code ec;
-    fs::path debug_log_path = fs::path(source_dir) / "ai_debug.log";
-    debug_log_path = fs::absolute(debug_log_path, ec).lexically_normal();
-    if (FILE* file = fopen(debug_log_path.string().c_str(), "w")) {
-        fputs(content.c_str(), file);
-        fclose(file);
-    }
-}
-
-std::vector<std::string> pythonCommands(const std::vector<fs::path>& bases, std::string preferred_python) {
-    std::vector<std::string> commands;
-    std::vector<std::string> seen;
-
-    const auto push = [&commands, &seen](std::string command) {
-        if (command.empty()) {
-            return;
-        }
-        if (command.size() >= 2 && command.front() == '"' && command.back() == '"') {
-            command = command.substr(1, command.size() - 2);
-        }
-
-        std::string key = command;
-        for (auto& ch : key) {
-            ch = static_cast<char>(std::tolower(static_cast<unsigned char>(ch)));
-        }
-        if (std::ranges::find(seen, key) != seen.end()) {
-            return;
-        }
-        seen.push_back(std::move(key));
-
-        if (command.find_first_of("/\\:") != std::string::npos) {
-            if (std::error_code ec; !fs::exists(command, ec)) {
-                return;
-            }
-            command = fs::path(command).lexically_normal().generic_string();
-        }
-        commands.push_back(std::move(command));
-    };
-
-    if (const char* env_py = std::getenv("GOMOKU_PYTHON_EXECUTABLE"); env_py && *env_py) {
-        push(env_py);
-    }
-    push(std::move(preferred_python));
-
-    static constexpr std::array kCandidateExecutables = {
-        ".gomoku-python/Scripts/python.exe",
-        ".gomoku-python/python.exe",
-        ".venv/Scripts/python.exe",
-        ".venv/bin/python3",
-        ".venv/bin/python",
-        "Scripts/python.exe",
-        "python/bin/python3",
-        "python/bin/python"
-    };
-    for (const auto& base : bases) {
-        for (const auto* relative : kCandidateExecutables) {
-            push((base / relative).generic_string());
-        }
-    }
-
-    push("python");
-    push("python3");
-    return commands;
-}
-
-std::string serializeBoard(const gomoku::Board& board) {
-    const int size = board.getSize();
-    std::string out;
-    out.reserve(size * size);
-    for (int y = 0; y < size; ++y) {
-        for (int x = 0; x < size; ++x) {
-            out += stoneChar(board.getStone(x, y));
-        }
-    }
-    return out;
-}
-
-std::optional<std::pair<int, int>> parseMove(const std::string& output) {
-    std::istringstream ss(output);
-    std::string line;
-    std::optional<std::pair<int, int>> parsed_move;
-
-    while (std::getline(ss, line)) {
-        std::istringstream line_stream(line);
-        int x = 0;
-        int y = 0;
-        if (std::string trailing; (line_stream >> x >> y) && !(line_stream >> trailing)) {
-            parsed_move = std::pair{x, y};
-        }
-    }
-
-    return parsed_move;
-}
-
-#if defined(_WIN32)
-int runProcess(const std::string& command_line, std::string& output) {
-    SECURITY_ATTRIBUTES sa{sizeof(sa), nullptr, TRUE};
-    HANDLE read_pipe = nullptr;
-    HANDLE write_pipe = nullptr;
-    if (!CreatePipe(&read_pipe, &write_pipe, &sa, 0)) {
-        return -1;
-    }
-    SetHandleInformation(read_pipe, HANDLE_FLAG_INHERIT, 0);
-
-    STARTUPINFOA startup_info{};
-    startup_info.cb = sizeof(startup_info);
-    startup_info.dwFlags = STARTF_USESTDHANDLES;
-    startup_info.hStdOutput = write_pipe;
-    startup_info.hStdError = write_pipe;
-    startup_info.hStdInput = GetStdHandle(STD_INPUT_HANDLE);
-
-    PROCESS_INFORMATION process_info{};
-    std::vector<char> mutable_command(command_line.begin(), command_line.end());
-    mutable_command.push_back('\0');
-
-    if (!CreateProcessA(nullptr,
-                        mutable_command.data(),
-                        nullptr,
-                        nullptr,
-                        TRUE,
-                        CREATE_NO_WINDOW,
-                        nullptr,
-                        nullptr,
-                        &startup_info,
-                        &process_info)) {
-        CloseHandle(read_pipe);
-        CloseHandle(write_pipe);
-        return -1;
-    }
-
-    CloseHandle(write_pipe);
-
-    std::array<char, 4096> buffer{};
-    DWORD read = 0;
-    while (ReadFile(read_pipe, buffer.data(), static_cast<DWORD>(buffer.size()), &read, nullptr) && read > 0) {
-        output.append(buffer.data(), read);
-    }
-
-    CloseHandle(read_pipe);
-    WaitForSingleObject(process_info.hProcess, INFINITE);
-
-    DWORD exit_code = 1;
-    GetExitCodeProcess(process_info.hProcess, &exit_code);
-    CloseHandle(process_info.hProcess);
-    CloseHandle(process_info.hThread);
-
-    return static_cast<int>(exit_code);
-}
-#endif
-
-struct RawModelResult {
-    std::optional<std::pair<int, int>> move;
-    std::string reason;
+struct LinePattern {
+    int length = 1;
+    int open_ends = 0;
+    int jump_extensions = 0;
 };
 
-RawModelResult queryModelMove(const gomoku::Board& board,
-                              const std::string& source_dir,
-                              const std::string& preferred_python) {
-    const auto bases = baseDirs(source_dir);
+struct PlacementReward {
+    double total = 0.0;
+    int open_threes = 0;
+    int fours = 0;
+    bool winning = false;
+};
 
-    std::optional<fs::path> script;
-    for (const auto* candidate : {
-             "python/inference/runModelAndReturnPoint.py",
-             "python/runModelAndReturnPoint.py",
-             "runModelAndReturnPoint.py"
-         }) {
-        script = findFile(bases, candidate);
-        if (script) {
-            break;
-        }
-    }
-    if (!script) {
-        const std::string reason =
-            "runModelAndReturnPoint.py not found in expected paths: python/inference, python, project root";
-        writeDebugLog(source_dir, reason + "\n");
-        return {
-            std::nullopt,
-            reason
-        };
-    }
+struct CandidateReward {
+    double total = -std::numeric_limits<double>::infinity();
+    double attack = 0.0;
+    double defense = 0.0;
+    double center = 0.0;
+    double local = 0.0;
+    bool winning = false;
+    bool blocks_win = false;
+};
 
-    static constexpr std::array kModelCandidates = {
-        "best.pt",
-        "python/models/az_prompt_smoke/best.pt",
-        "python/models/az_prompt_smoke/gomoku_model.pt",
-        "python/models/az_prompt_smoke/publish.pt",
-        "python/models/alphazero/best.pt",
-        "python/models/alphazero/gomoku_alphazero_best.pt",
-        "python/models/alphazero_bootstrap/gomoku_alphazero_bootstrap.pt",
-        "gomoku_model.pt",
-        "gomoku_model.pt.bak",
-        "python/models/gomoku_model.pt"
-    };
-
-    std::optional<fs::path> model;
-    for (const auto* candidate : kModelCandidates) {
-        model = findFile(bases, candidate);
-        if (model) {
-            break;
-        }
-    }
-    if (!model) {
-        std::string searched_summary;
-        std::string debug_detail = "[model-search]\n";
-        for (const auto* candidate : kModelCandidates) {
-            if (!searched_summary.empty()) {
-                searched_summary += " || ";
-            }
-            searched_summary += compactMessage(searchedPaths(bases, candidate), 220);
-            debug_detail += "[candidate] ";
-            debug_detail += candidate;
-            debug_detail += "\n";
-            debug_detail += searchedPaths(bases, candidate);
-            debug_detail += "\n";
-        }
-        const std::string reason =
-            "no model checkpoint found; searched: " + compactMessage(searched_summary, 1200);
-        writeDebugLog(source_dir, debug_detail + "\n[reason] " + reason + "\n");
-        return {
-            std::nullopt,
-            reason
-        };
-    }
-
-    const auto candidates = pythonCommands(bases, preferred_python);
-    if (candidates.empty()) {
-        return {std::nullopt, "no usable python command found"};
-    }
-
-    const std::string board_text = serializeBoard(board);
-    const char current = stoneChar(board.getCurrentPlayer());
-    const std::string args =
-        "--board-size " + std::to_string(board.getSize()) + " "
-        "--model-path " + quoteArg(model->generic_string()) + " "
-        "--current " + std::string(1, current) + " "
-        "--board " + quoteArg(board_text);
-
-    std::vector<std::string> logs;
-    logs.reserve(candidates.size());
-    std::string debug_log;
-
-    for (const auto& python : candidates) {
-        std::string output;
-        debug_log += "[try] py=" + python +
-                     " script=" + script->generic_string() +
-                     " model=" + model->generic_string() + "\n";
-#if defined(_WIN32)
-        const std::string command =
-            quoteArg(python) + " " + quoteArg(script->generic_string()) + " " + args;
-        const int rc = runProcess(command, output);
-#else
-        const std::string command =
-            quoteArg(python) + " " + quoteArg(script->generic_string()) + " " + args + " 2>&1";
-        FILE* pipe = popen(command.c_str(), "r");
-        if (!pipe) {
-            logs.push_back("py=" + python + " -> cannot spawn");
-            continue;
-        }
-        std::array<char, 256> buffer{};
-        while (fgets(buffer.data(), static_cast<int>(buffer.size()), pipe)) {
-            output += buffer.data();
-        }
-        const int rc = pclose(pipe);
-#endif
-
-        if (rc != 0) {
-            logs.push_back("py=" + python + " exit=" + std::to_string(rc) + ": " + compactMessage(output));
-            debug_log += "exit=" + std::to_string(rc) + "\n";
-            if (output.empty()) {
-                debug_log += "(no output)\n";
-            } else {
-                debug_log += output;
-                if (output.back() != '\n') {
-                    debug_log += "\n";
-                }
-            }
-            debug_log += "\n";
-            continue;
-        }
-
-        const auto parsed = parseMove(output);
-        if (!parsed) {
-            writeDebugLog(source_dir, debug_log + "[parse-error]\n" + output + "\n");
-            return {
-                std::nullopt,
-                "cannot parse AI move (py=" + python + "): " + compactMessage(output)
-            };
-        }
-
-        const auto [x, y] = *parsed;
-        if (const int size = board.getSize(); x < 0 || x >= size || y < 0 || y >= size) {
-            writeDebugLog(source_dir, debug_log + "[range-error] output:\n" + output + "\n");
-            return {
-                std::nullopt,
-                "AI move out of range: (" + std::to_string(x) + "," + std::to_string(y) + ")"
-            };
-        }
-
-        if (board.getStone(x, y) != gomoku::Stone::EMPTY) {
-            writeDebugLog(source_dir, debug_log + "[occupied-error] output:\n" + output + "\n");
-            return {
-                std::nullopt,
-                "AI move is not empty: (" + std::to_string(x) + "," + std::to_string(y) + ")"
-            };
-        }
-
-        return {std::pair{x, y}, ""};
-    }
-
-    std::string summary;
-    for (const auto& entry : logs) {
-        if (!summary.empty()) {
-            summary += " | ";
-        }
-        summary += entry;
-    }
-
-    writeDebugLog(source_dir, debug_log + "[summary] " + summary + "\n");
-
-    return {
-        std::nullopt,
-        "all python candidates failed: " + compactMessage(summary, 1200)
-    };
+[[nodiscard]] bool inBounds(const Board& board, const int x, const int y) {
+    return x >= 0 && x < board.getSize() && y >= 0 && y < board.getSize();
 }
 
-std::optional<std::pair<int, int>> fallbackMove(const gomoku::Board& board) {
+[[nodiscard]] Stone opponentOf(const Stone stone) {
+    return stone == Stone::BLACK ? Stone::WHITE : Stone::BLACK;
+}
+
+[[nodiscard]] bool boardIsEmpty(const Board& board) {
     const int size = board.getSize();
     for (int y = 0; y < size; ++y) {
         for (int x = 0; x < size; ++x) {
-            if (board.getStone(x, y) == gomoku::Stone::EMPTY) {
-                return std::pair{x, y};
+            if (board.getStone(x, y) != Stone::EMPTY) {
+                return false;
             }
         }
     }
-    return std::nullopt;
+    return true;
+}
+
+[[nodiscard]] int countContiguous(const Board& board,
+                                  int x,
+                                  int y,
+                                  const int dx,
+                                  const int dy,
+                                  const Stone player) {
+    int count = 0;
+    x += dx;
+    y += dy;
+
+    while (inBounds(board, x, y) && board.getStone(x, y) == player) {
+        ++count;
+        x += dx;
+        y += dy;
+    }
+
+    return count;
+}
+
+[[nodiscard]] int countJumpExtension(const Board& board,
+                                     const int x,
+                                     const int y,
+                                     const int dx,
+                                     const int dy,
+                                     const Stone player,
+                                     const int contiguous_count) {
+    const int gap_x = x + dx * (contiguous_count + 1);
+    const int gap_y = y + dy * (contiguous_count + 1);
+    if (!inBounds(board, gap_x, gap_y) || board.getStone(gap_x, gap_y) != Stone::EMPTY) {
+        return 0;
+    }
+
+    return countContiguous(board, gap_x, gap_y, dx, dy, player);
+}
+
+[[nodiscard]] LinePattern analyzeDirection(const Board& board,
+                                           const int x,
+                                           const int y,
+                                           const int dx,
+                                           const int dy,
+                                           const Stone player) {
+    const int left = countContiguous(board, x, y, -dx, -dy, player);
+    const int right = countContiguous(board, x, y, dx, dy, player);
+
+    LinePattern pattern;
+    pattern.length = 1 + left + right;
+
+    const int left_open_x = x - dx * (left + 1);
+    const int left_open_y = y - dy * (left + 1);
+    if (inBounds(board, left_open_x, left_open_y) && board.getStone(left_open_x, left_open_y) == Stone::EMPTY) {
+        ++pattern.open_ends;
+    }
+
+    const int right_open_x = x + dx * (right + 1);
+    const int right_open_y = y + dy * (right + 1);
+    if (inBounds(board, right_open_x, right_open_y) && board.getStone(right_open_x, right_open_y) == Stone::EMPTY) {
+        ++pattern.open_ends;
+    }
+
+    pattern.jump_extensions += countJumpExtension(board, x, y, dx, dy, player, right);
+    pattern.jump_extensions += countJumpExtension(board, x, y, -dx, -dy, player, left);
+    return pattern;
+}
+
+[[nodiscard]] double lineReward(const LinePattern& pattern) {
+    if (pattern.length >= 5) {
+        return 1'200'000.0;
+    }
+
+    double reward = 0.0;
+    if (pattern.length == 4) {
+        reward = pattern.open_ends == 2 ? 140'000.0 : pattern.open_ends == 1 ? 32'000.0 : 0.0;
+    } else if (pattern.length == 3) {
+        reward = pattern.open_ends == 2 ? 7'500.0 : pattern.open_ends == 1 ? 1'400.0 : 0.0;
+    } else if (pattern.length == 2) {
+        reward = pattern.open_ends == 2 ? 520.0 : pattern.open_ends == 1 ? 120.0 : 0.0;
+    } else {
+        reward = pattern.open_ends == 2 ? 40.0 : pattern.open_ends == 1 ? 12.0 : 0.0;
+    }
+
+    if (pattern.jump_extensions > 0) {
+        reward += static_cast<double>(pattern.jump_extensions * pattern.jump_extensions) * 180.0;
+        if (pattern.length >= 3) {
+            reward += static_cast<double>(pattern.jump_extensions) * 950.0;
+        }
+    }
+
+    return reward;
+}
+
+[[nodiscard]] PlacementReward evaluatePlacement(const Board& board,
+                                                const int x,
+                                                const int y,
+                                                const Stone player) {
+    PlacementReward reward;
+    if (board.getStone(x, y) != Stone::EMPTY) {
+        return reward;
+    }
+
+    for (const auto& [dx, dy] : kDirections) {
+        const LinePattern pattern = analyzeDirection(board, x, y, dx, dy, player);
+        reward.total += lineReward(pattern);
+
+        if (pattern.length >= 5) {
+            reward.winning = true;
+        }
+        if (pattern.length == 4 && pattern.open_ends >= 1) {
+            ++reward.fours;
+        }
+        if (pattern.length == 3 && pattern.open_ends == 2) {
+            ++reward.open_threes;
+        }
+    }
+
+    if (reward.fours >= 2) {
+        reward.total += 180'000.0;
+    }
+    if (reward.open_threes >= 2) {
+        reward.total += 22'000.0;
+    }
+    if (reward.winning) {
+        reward.total += 4'000'000.0;
+    }
+
+    return reward;
+}
+
+[[nodiscard]] double centerReward(const Board& board, const int x, const int y) {
+    const double center = static_cast<double>(board.getSize() - 1) / 2.0;
+    const double dx = static_cast<double>(x) - center;
+    const double dy = static_cast<double>(y) - center;
+    const double distance = std::hypot(dx, dy);
+    const double max_distance = std::max(1.0, std::hypot(center, center));
+    return (1.0 - distance / max_distance) * 90.0;
+}
+
+[[nodiscard]] double localReward(const Board& board,
+                                 const int x,
+                                 const int y,
+                                 const Stone player) {
+    double reward = 0.0;
+
+    for (int offset_y = -2; offset_y <= 2; ++offset_y) {
+        for (int offset_x = -2; offset_x <= 2; ++offset_x) {
+            if (offset_x == 0 && offset_y == 0) {
+                continue;
+            }
+
+            const int nx = x + offset_x;
+            const int ny = y + offset_y;
+            if (!inBounds(board, nx, ny)) {
+                continue;
+            }
+
+            const Stone stone = board.getStone(nx, ny);
+            if (stone == Stone::EMPTY) {
+                continue;
+            }
+
+            const int distance = std::max(std::abs(offset_x), std::abs(offset_y));
+            double contribution = distance == 1 ? 28.0 : 10.0;
+            if (stone == player) {
+                contribution += 8.0;
+            } else {
+                contribution += 4.0;
+            }
+            reward += contribution;
+        }
+    }
+
+    return reward;
+}
+
+[[nodiscard]] CandidateReward evaluateCandidate(const Board& board, const int x, const int y) {
+    const Stone player = board.getCurrentPlayer();
+    const Stone opponent = opponentOf(player);
+
+    const PlacementReward attack = evaluatePlacement(board, x, y, player);
+    const PlacementReward defense = evaluatePlacement(board, x, y, opponent);
+
+    CandidateReward reward;
+    reward.attack = attack.total;
+    reward.defense = defense.total;
+    reward.center = centerReward(board, x, y);
+    reward.local = localReward(board, x, y, player);
+    reward.winning = attack.winning;
+    reward.blocks_win = defense.winning;
+
+    reward.total = attack.total * 1.08 + defense.total * 0.96 + reward.center + reward.local;
+    if (attack.fours > 0 && defense.open_threes > 0) {
+        reward.total += 18'000.0;
+    }
+    if (attack.open_threes > 0 && defense.fours > 0) {
+        reward.total += 24'000.0;
+    }
+    if (attack.winning) {
+        reward.total += 8'000'000.0;
+    }
+    if (defense.winning) {
+        reward.total += 6'500'000.0;
+    }
+
+    return reward;
+}
+
+[[nodiscard]] bool shouldReplaceBest(const Board& board,
+                                     const int candidate_x,
+                                     const int candidate_y,
+                                     const CandidateReward& candidate_reward,
+                                     const int best_x,
+                                     const int best_y,
+                                     const CandidateReward& best_reward) {
+    if (candidate_reward.total > best_reward.total + kScoreEpsilon) {
+        return true;
+    }
+    if (candidate_reward.total + kScoreEpsilon < best_reward.total) {
+        return false;
+    }
+
+    if (candidate_reward.attack > best_reward.attack + kScoreEpsilon) {
+        return true;
+    }
+    if (candidate_reward.attack + kScoreEpsilon < best_reward.attack) {
+        return false;
+    }
+
+    if (candidate_reward.defense > best_reward.defense + kScoreEpsilon) {
+        return true;
+    }
+    if (candidate_reward.defense + kScoreEpsilon < best_reward.defense) {
+        return false;
+    }
+
+    const double center = static_cast<double>(board.getSize() - 1) / 2.0;
+    const double candidate_distance =
+        std::abs(static_cast<double>(candidate_x) - center) + std::abs(static_cast<double>(candidate_y) - center);
+    const double best_distance =
+        std::abs(static_cast<double>(best_x) - center) + std::abs(static_cast<double>(best_y) - center);
+    if (candidate_distance + kScoreEpsilon < best_distance) {
+        return true;
+    }
+    if (candidate_distance > best_distance + kScoreEpsilon) {
+        return false;
+    }
+
+    if (candidate_y != best_y) {
+        return candidate_y < best_y;
+    }
+    return candidate_x < best_x;
+}
+
+[[nodiscard]] std::string describeReward(const CandidateReward& reward) {
+    std::ostringstream stream;
+    stream << "reward=" << std::llround(reward.total)
+           << " attack=" << std::llround(reward.attack)
+           << " defend=" << std::llround(reward.defense)
+           << " center=" << std::llround(reward.center)
+           << " local=" << std::llround(reward.local);
+
+    if (reward.winning) {
+        stream << " | win";
+    } else if (reward.blocks_win) {
+        stream << " | block";
+    }
+
+    return stream.str();
 }
 
 } // namespace
 
-Player::Player(std::string source_dir, std::string preferred_python)
-    : source_dir_(std::move(source_dir)),
-      preferred_python_(std::move(preferred_python)) {}
-
 MoveResult Player::makeMove(const Board& board) const {
-    auto [model_move, reason] = queryModelMove(board, source_dir_, preferred_python_);
-    if (model_move) {
-        return {.move = model_move, .used_fallback = false, .diagnostic = ""};
+    if (board.getStatus() != GameStatus::PLAYING) {
+        return {.move = std::nullopt, .used_fallback = false, .diagnostic = "board is not in PLAYING state"};
     }
 
-    const auto fallback = fallbackMove(board);
-    if (!fallback) {
-        if (reason.empty()) {
-            reason = "no legal fallback move";
+    if (boardIsEmpty(board)) {
+        const int center = board.getSize() / 2;
+        return {
+            .move = std::pair{center, center},
+            .used_fallback = false,
+            .diagnostic = "reward=open-center"
+        };
+    }
+
+    std::optional<std::pair<int, int>> best_move;
+    CandidateReward best_reward;
+
+    const int size = board.getSize();
+    for (int y = 0; y < size; ++y) {
+        for (int x = 0; x < size; ++x) {
+            if (board.getStone(x, y) != Stone::EMPTY) {
+                continue;
+            }
+
+            const CandidateReward candidate_reward = evaluateCandidate(board, x, y);
+            if (!best_move ||
+                shouldReplaceBest(board, x, y, candidate_reward, best_move->first, best_move->second, best_reward)) {
+                best_move = std::pair{x, y};
+                best_reward = candidate_reward;
+            }
         }
-        return {.move = std::nullopt, .used_fallback = true, .diagnostic = std::move(reason)};
     }
 
-    return {.move = fallback, .used_fallback = true, .diagnostic = std::move(reason)};
+    if (!best_move) {
+        return {.move = std::nullopt, .used_fallback = false, .diagnostic = "no legal moves"};
+    }
+
+    return {
+        .move = best_move,
+        .used_fallback = false,
+        .diagnostic = describeReward(best_reward)
+    };
 }
 
 } // namespace gomoku::ai
