@@ -4,7 +4,7 @@
  * @date 2026/3/31
  * @brief Remote PvP socket transport implementation.
  */
-#include "gomoku/webConnect.h"
+#include "../../include/gomoku/net/webConnect.h"
 
 #include <algorithm>
 #include <array>

@@ -9,7 +9,7 @@
  * - System Calls / Interactions: 
  * - Resource Impact: 
  */
-#include "gomoku/voice.h"
+#include "../../include/gomoku/audio/voice.h"
 
 #define MINIAUDIO_IMPLEMENTATION
 #include "gomoku/miniaudio.h"

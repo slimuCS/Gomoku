@@ -1,4 +1,4 @@
-#include "gomoku/game_session.h"
+#include "../../include/gomoku/core/game_session.h"
 
 #include <algorithm>
 #include <chrono>

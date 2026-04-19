@@ -1,6 +1,6 @@
-#include "gomoku/ui_controller.h"
+#include "../../include/gomoku/ui/ui_controller.h"
 
-#include "gomoku/webConnect.h"
+#include "../../include/gomoku/net/webConnect.h"
 
 #include "ftxui/component/component.hpp"
 #include "ftxui/component/component_base.hpp"

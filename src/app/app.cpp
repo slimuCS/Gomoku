@@ -10,9 +10,9 @@
  * - Resource Impact:
  */
 
-#include "gomoku/game_session.h"
-#include "gomoku/ui_controller.h"
-#include "gomoku/voice.h"
+#include "../../include/gomoku/core/game_session.h"
+#include "../../include/gomoku/ui/ui_controller.h"
+#include "../../include/gomoku/audio/voice.h"
 
 int main() {
     gomoku::GameSession session(15);

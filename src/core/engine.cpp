@@ -11,8 +11,8 @@
  * - Resource Impact: O(1) time complexity for moves and win-checking. Copying the board
  *   is an O(N) memory block copy (where N = 225), highly optimized for tree search.
  */
-#include "gomoku/engine.h"
-#include "gomoku/voice.h"
+#include "../../include/gomoku/core/engine.h"
+#include "../../include/gomoku/audio/voice.h"
 
 namespace gomoku {
 

@@ -1,4 +1,4 @@
-#include "gomoku/ai_player.h"
+#include "../../include/gomoku/ai/ai_player.h"
 
 #include <array>
 #include <cmath>

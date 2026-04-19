@@ -15,7 +15,7 @@
 #include <pybind11/stl.h>
 #include <algorithm>
 #include <array>
-#include "gomoku/engine.h"
+#include "../../include/gomoku/core/engine.h"
 
 namespace py = pybind11;
 
