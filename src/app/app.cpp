@@ -18,11 +18,11 @@ int main() {
     gomoku::GameSession session(15);
     const UI::Controller controller(session);
 
-    gameVoice.initAudioSystem();
-    gameVoice.backGroundMusic();
+    voice::initAudioSystem();
+    voice::backGroundMusic();
 
     controller.Start();
 
-    gameVoice.cleanupAudioSystem();
+    voice::cleanupAudioSystem();
     return 0;
 }

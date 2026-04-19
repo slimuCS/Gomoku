@@ -3,7 +3,6 @@
 
 #include <algorithm>
 #include <chrono>
-#include <ctime>
 #include <filesystem>
 #include <fstream>
 #include <iomanip>
@@ -20,7 +19,7 @@ constexpr int kMaxSerializedBoardSize = 255;
 
 void playStoneAudioIfEnabled(const bool play_audio) {
     if (play_audio) {
-        gameVoice.placeStoneSound();
+        voice::placeStoneSound();
     }
 }
 
@@ -214,13 +213,12 @@ bool GameSession::deserialize(const std::string& filepath) {
     }
 
     std::istringstream mode_line(line);
-    std::string mode_key;
     std::string mode_value;
-    if (!(mode_line >> mode_key >> mode_value) || mode_key != "mode") {
+    if (std::string mode_key; !(mode_line >> mode_key >> mode_value) || mode_key != "mode") {
         last_persistence_error_ = "Invalid mode header in save file.";
         return false;
     }
-    SessionMode parsed_mode = SessionMode::PVP;
+    auto parsed_mode = SessionMode::PVP;
     if (!parseModeToken(mode_value, parsed_mode)) {
         last_persistence_error_ = "Unsupported mode token in save file: " + mode_value;
         return false;
@@ -237,9 +235,8 @@ bool GameSession::deserialize(const std::string& filepath) {
     }
 
     std::istringstream size_line(line);
-    std::string size_key;
     int parsed_size = 0;
-    if (!(size_line >> size_key >> parsed_size) || size_key != "size") {
+    if (std::string size_key; !(size_line >> size_key >> parsed_size) || size_key != "size") {
         last_persistence_error_ = "Invalid size header in save file.";
         return false;
     }

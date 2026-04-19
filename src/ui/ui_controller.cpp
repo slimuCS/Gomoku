@@ -16,7 +16,7 @@
 #include <memory>
 #include <optional>
 #include <string>
-#include <string_view>
+
 #include <thread>
 #include <utility>
 #include <vector>
@@ -104,7 +104,7 @@ Element stoneCellElement(const gomoku::Stone stone) {
 
 std::string trimCopy(std::string value) {
     const auto is_space = [](const unsigned char ch) { return std::isspace(ch) != 0; };
-    value.erase(value.begin(), std::find_if(value.begin(), value.end(), [&](const unsigned char ch) {
+    value.erase(value.begin(), std::ranges::find_if(value, [&](const unsigned char ch) {
         return !is_space(ch);
     }));
     value.erase(std::find_if(value.rbegin(), value.rend(), [&](const unsigned char ch) {
@@ -120,8 +120,7 @@ std::optional<std::uint16_t> parsePortValue(const std::string& raw_value) {
     }
 
     int port = 0;
-    const auto [ptr, ec] = std::from_chars(value.data(), value.data() + value.size(), port);
-    if (ec != std::errc{} || ptr != value.data() + value.size()) {
+    if (const auto [ptr, ec] = std::from_chars(value.data(), value.data() + value.size(), port); ec != std::errc{} || ptr != value.data() + value.size()) {
         return std::nullopt;
     }
     if (port < 1 || port > 65535) {
@@ -151,7 +150,7 @@ struct Controller::Impl {
         : session(game_session),
           network(game_session),
           screen_state(std::make_unique<ScreenState>()) {
-        ui_tick_ = std::jthread([this](const std::stop_token stop_token) {
+        ui_tick_ = std::jthread([this](const std::stop_token& stop_token) {
             while (!stop_token.stop_requested()) {
                 std::this_thread::sleep_for(kUiTickInterval);
                 if (screen_state) {
@@ -163,7 +162,7 @@ struct Controller::Impl {
     }
 
     void Start() {
-        auto container = Container::Tab({
+        const auto container = Container::Tab({
             renderFrontPage(),
             renderGameBoard(false),
             renderGameBoard(true),
@@ -175,7 +174,7 @@ struct Controller::Impl {
             renderRemoteWaitPage()
         }, &active_index);
 
-        auto root = CatchEvent(container, [this](const Event& event) {
+        const auto root = CatchEvent(container, [this](const Event& event) {
             if (event == Event::Custom) {
                 return handleNetworkTick();
             }
@@ -375,11 +374,10 @@ struct Controller::Impl {
         if (remote_mode_ && !remote_waiting_for_peer_ && network.isConnected()) {
             const auto previous_move_count = session.move_history().size();
             const auto previous_status = session.status();
-            const bool handled = network.pump(std::chrono::milliseconds{0});
 
-            if (handled ||
-                previous_move_count != session.move_history().size() ||
-                previous_status != session.status()) {
+            if (const bool handled = network.pump(std::chrono::milliseconds{0}); handled ||
+                                                                                 previous_move_count != session.move_history().size() ||
+                                                                                 previous_status != session.status()) {
                 syncCursorToSession();
                 updateRemoteStatus();
                 changed = true;
@@ -442,8 +440,7 @@ struct Controller::Impl {
         }
 
         for (fs::directory_iterator it(saves_path, ec), end; !ec && it != end; it.increment(ec)) {
-            const auto& entry = *it;
-            if (entry.path().extension() == ".gomoku") {
+            if (const auto& entry = *it; entry.path().extension() == ".gomoku") {
                 save_files_.push_back(entry.path().string());
             }
         }
@@ -454,7 +451,7 @@ struct Controller::Impl {
             return;
         }
 
-        std::sort(save_files_.begin(), save_files_.end(), std::greater<>());
+        std::ranges::sort(save_files_, std::greater<>());
     }
 
     Component renderLoadGamePage() {
@@ -537,60 +534,60 @@ struct Controller::Impl {
         return component;
     }
 
-    bool handleSaveMenuEvent(const Event& event) {
-        constexpr int kSaveMenuItems = 4;
-
-        if (event == Event::ArrowUp) {
-            save_menu_selected_ = (save_menu_selected_ + kSaveMenuItems - 1) % kSaveMenuItems;
-            return true;
-        }
-        if (event == Event::ArrowDown) {
-            save_menu_selected_ = (save_menu_selected_ + 1) % kSaveMenuItems;
-            return true;
-        }
-        if (event == Event::Escape) {
-            show_save_menu_ = false;
-            return true;
-        }
-        if (event == Event::Return) {
-            switch (save_menu_selected_) {
-                case 0: {
-                    const std::string path = session.serialize();
-                    if (path.empty()) {
-                        setLocalStatus("Save failed: " + session.last_persistence_error());
-                        break;
-                    }
-                    show_save_menu_ = false;
-                    clearLocalStatus();
-                    backToMenu();
-                    break;
-                }
-                case 1: {
-                    const std::string path = session.serialize();
-                    if (path.empty()) {
-                        setLocalStatus("Save failed: " + session.last_persistence_error());
-                        break;
-                    }
-                    show_save_menu_ = false;
-                    namespace fs = std::filesystem;
-                    setLocalStatus("Saved to " + fs::path(path).filename().string(), Color::Green);
-                    break;
-                }
-                case 2:
-                    show_save_menu_ = false;
-                    clearLocalStatus();
-                    backToMenu();
-                    break;
-                case 3:
-                    show_save_menu_ = false;
-                    break;
-                default:
-                    break;
-            }
-            return true;
-        }
-        return true;
-    }
+    // bool handleSaveMenuEvent(const Event& event) {
+    //     constexpr int kSaveMenuItems = 4;
+    //
+    //     if (event == Event::ArrowUp) {
+    //         save_menu_selected_ = (save_menu_selected_ + kSaveMenuItems - 1) % kSaveMenuItems;
+    //         return true;
+    //     }
+    //     if (event == Event::ArrowDown) {
+    //         save_menu_selected_ = (save_menu_selected_ + 1) % kSaveMenuItems;
+    //         return true;
+    //     }
+    //     if (event == Event::Escape) {
+    //         show_save_menu_ = false;
+    //         return true;
+    //     }
+    //     if (event == Event::Return) {
+    //         switch (save_menu_selected_) {
+    //             case 0: {
+    //                 const std::string path = session.serialize();
+    //                 if (path.empty()) {
+    //                     setLocalStatus("Save failed: " + session.last_persistence_error());
+    //                     break;
+    //                 }
+    //                 show_save_menu_ = false;
+    //                 clearLocalStatus();
+    //                 backToMenu();
+    //                 break;
+    //             }
+    //             case 1: {
+    //                 const std::string path = session.serialize();
+    //                 if (path.empty()) {
+    //                     setLocalStatus("Save failed: " + session.last_persistence_error());
+    //                     break;
+    //                 }
+    //                 show_save_menu_ = false;
+    //                 namespace fs = std::filesystem;
+    //                 setLocalStatus("Saved to " + fs::path(path).filename().string(), Color::Green);
+    //                 break;
+    //             }
+    //             case 2:
+    //                 show_save_menu_ = false;
+    //                 clearLocalStatus();
+    //                 backToMenu();
+    //                 break;
+    //             case 3:
+    //                 show_save_menu_ = false;
+    //                 break;
+    //             default:
+    //                 break;
+    //         }
+    //         return true;
+    //     }
+    //     return true;
+    // }
 
     bool handleCursorMove(const Event& event) {
         const int limit = boardLimit();
@@ -689,7 +686,7 @@ struct Controller::Impl {
         component->render_logic = [this] { return renderGrid(); };
         component->event_logic = [this, has_ai](const Event& event) {
             if (show_save_menu_) {
-                return handleSaveMenuEvent(event);
+                return true;
             }
 
             if (handleCursorMove(event)) {
@@ -874,7 +871,7 @@ struct Controller::Impl {
         auto start_button = Button("Start Hosting", [this] { beginHosting(); });
         auto back_button = Button("Back", [this] { backToMenu(); });
 
-        auto container = Container::Vertical({port_input, start_button, back_button});
+        const auto container = Container::Vertical({port_input, start_button, back_button});
         auto component = Renderer(container, [port_input, start_button, back_button, this] {
             return vbox({
                 text("Host Remote Game") | hcenter | bold | color(Color::Cyan),
@@ -908,7 +905,7 @@ struct Controller::Impl {
         auto connect_button = Button("Connect", [this] { beginJoin(); });
         auto back_button = Button("Back", [this] { backToMenu(); });
 
-        auto container = Container::Vertical({host_input, port_input, connect_button, back_button});
+        const auto container = Container::Vertical({host_input, port_input, connect_button, back_button});
         auto component = Renderer(container, [host_input, port_input, connect_button, back_button, this] {
             return vbox({
                 text("Join Remote Game") | hcenter | bold | color(Color::Cyan),
@@ -1055,7 +1052,7 @@ struct Controller::Impl {
             menu_items.push_back(item);
         }
 
-        auto overlay = vbox({
+        const auto overlay = vbox({
             text("Save / Leave") | hcenter | bold | color(Color::Cyan),
             separator(),
             vbox(std::move(menu_items)),

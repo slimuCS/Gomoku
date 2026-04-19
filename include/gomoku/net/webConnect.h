@@ -27,17 +27,17 @@ public:
     webConnect(webConnect&&) noexcept;
     webConnect& operator=(webConnect&&) noexcept;
 
-    bool openHost(std::uint16_t port, std::string bind_address = "0.0.0.0");
-    bool waitForPeer(std::optional<std::chrono::milliseconds> timeout = std::nullopt);
-    bool connectTo(const std::string& host, std::uint16_t port);
+    bool openHost(std::uint16_t port, const std::string& bind_address = "0.0.0.0") const;
+    bool waitForPeer(std::optional<std::chrono::milliseconds> timeout = std::nullopt) const;
+    bool connectTo(const std::string& host, std::uint16_t port) const;
 
-    bool sendLocalMove(int x, int y);
-    bool requestUndo();
-    bool requestReset();
-    bool syncSnapshot();
-    bool pump(std::chrono::milliseconds timeout = std::chrono::milliseconds{0});
+    bool sendLocalMove(int x, int y) const;
+    bool requestUndo() const;
+    bool requestReset() const;
+    bool syncSnapshot() const;
+    bool pump(std::chrono::milliseconds timeout = std::chrono::milliseconds{0}) const;
 
-    void disconnect();
+    void disconnect() const;
 
     [[nodiscard]] bool isHosting() const noexcept;
     [[nodiscard]] bool isConnected() const noexcept;

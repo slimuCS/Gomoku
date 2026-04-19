@@ -111,14 +111,12 @@ struct CandidateReward {
     pattern.length = 1 + left + right;
 
     const int left_open_x = x - dx * (left + 1);
-    const int left_open_y = y - dy * (left + 1);
-    if (inBounds(board, left_open_x, left_open_y) && board.getStone(left_open_x, left_open_y) == Stone::EMPTY) {
+    if (const int left_open_y = y - dy * (left + 1); inBounds(board, left_open_x, left_open_y) && board.getStone(left_open_x, left_open_y) == Stone::EMPTY) {
         ++pattern.open_ends;
     }
 
     const int right_open_x = x + dx * (right + 1);
-    const int right_open_y = y + dy * (right + 1);
-    if (inBounds(board, right_open_x, right_open_y) && board.getStone(right_open_x, right_open_y) == Stone::EMPTY) {
+    if (const int right_open_y = y + dy * (right + 1); inBounds(board, right_open_x, right_open_y) && board.getStone(right_open_x, right_open_y) == Stone::EMPTY) {
         ++pattern.open_ends;
     }
 
@@ -333,7 +331,7 @@ struct CandidateReward {
 
 } // namespace
 
-MoveResult Player::makeMove(const Board& board) const {
+MoveResult Player::makeMove(const Board& board) {
     if (board.getStatus() != GameStatus::PLAYING) {
         return {.move = std::nullopt, .used_fallback = false, .diagnostic = "board is not in PLAYING state"};
     }
@@ -357,9 +355,8 @@ MoveResult Player::makeMove(const Board& board) const {
                 continue;
             }
 
-            const CandidateReward candidate_reward = evaluateCandidate(board, x, y);
-            if (!best_move ||
-                shouldReplaceBest(board, x, y, candidate_reward, best_move->first, best_move->second, best_reward)) {
+            if (const CandidateReward candidate_reward = evaluateCandidate(board, x, y); !best_move ||
+                                                                                         shouldReplaceBest(board, x, y, candidate_reward, best_move->first, best_move->second, best_reward)) {
                 best_move = std::pair{x, y};
                 best_reward = candidate_reward;
             }

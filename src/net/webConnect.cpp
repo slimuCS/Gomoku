@@ -54,7 +54,7 @@ enum class WaitResult {
 };
 
 [[nodiscard]] std::string trimCopy(std::string text) {
-    text.erase(text.begin(), std::find_if(text.begin(), text.end(), [](const unsigned char ch) {
+    text.erase(text.begin(), std::ranges::find_if(text, [](const unsigned char ch) {
         return !std::isspace(ch);
     }));
     text.erase(std::find_if(text.rbegin(), text.rend(), [](const unsigned char ch) {
@@ -69,23 +69,23 @@ enum class WaitResult {
 }
 
 [[nodiscard]] std::string normalizeToken(std::string token) {
-    std::transform(token.begin(), token.end(), token.begin(), [](const unsigned char ch) {
+    std::ranges::transform(token, token.begin(), [](const unsigned char ch) {
         return static_cast<char>(std::toupper(ch));
     });
     return token;
 }
 
-[[nodiscard]] std::string stoneToken(const Stone stone) {
-    switch (stone) {
-        case Stone::BLACK:
-            return "BLACK";
-        case Stone::WHITE:
-            return "WHITE";
-        case Stone::EMPTY:
-        default:
-            return "EMPTY";
-    }
-}
+// [[nodiscard]] std::string stoneToken(const Stone stone) {
+//     switch (stone) {
+//         case Stone::BLACK:
+//             return "BLACK";
+//         case Stone::WHITE:
+//             return "WHITE";
+//         case Stone::EMPTY:
+//         default:
+//             return "EMPTY";
+//     }
+// }
 
 [[nodiscard]] std::optional<Stone> stoneFromToken(std::string token) {
     token = normalizeToken(std::move(token));
@@ -181,7 +181,7 @@ WaitResult waitForReadable(const SocketHandle socket,
     FD_SET(socket, &read_set);
 
     timeval tv{};
-    timeval* tv_ptr = nullptr;
+    const timeval* tv_ptr = nullptr;
     if (timeout.has_value()) {
         const auto safe_timeout = std::max(timeout->count(), std::chrono::milliseconds::rep{0});
         tv.tv_sec = static_cast<long>(safe_timeout / 1000);
@@ -206,7 +206,7 @@ WaitResult waitForReadable(const SocketHandle socket,
 }
 
 bool setReuseAddress(const SocketHandle socket, std::string& error) {
-    const int enabled = 1;
+    constexpr int enabled = 1;
 #ifdef _WIN32
     if (setsockopt(socket, SOL_SOCKET, SO_REUSEADDR,
                    reinterpret_cast<const char*>(&enabled),
@@ -493,7 +493,7 @@ webConnect::~webConnect() = default;
 webConnect::webConnect(webConnect&&) noexcept = default;
 webConnect& webConnect::operator=(webConnect&&) noexcept = default;
 
-bool webConnect::openHost(const std::uint16_t port, std::string bind_address) {
+bool webConnect::openHost(const std::uint16_t port, const std::string& bind_address) const {
     disconnect();
     if (!ensureSocketRuntime(impl_->last_error)) {
         return false;
@@ -507,14 +507,13 @@ bool webConnect::openHost(const std::uint16_t port, std::string bind_address) {
     addrinfo* results = nullptr;
     const std::string service = std::to_string(port);
     const char* host = (bind_address.empty() || bind_address == "0.0.0.0") ? nullptr : bind_address.c_str();
-    const int lookup_rc = getaddrinfo(host, service.c_str(), &hints, &results);
-    if (lookup_rc != 0) {
+    if (const int lookup_rc = getaddrinfo(host, service.c_str(), &hints, &results); lookup_rc != 0) {
         impl_->last_error = "getaddrinfo() failed for host bind: " + std::string(gai_strerror(lookup_rc));
         return false;
     }
 
     SocketOwner listener;
-    for (addrinfo* current = results; current != nullptr; current = current->ai_next) {
+    for (const addrinfo* current = results; current != nullptr; current = current->ai_next) {
         SocketOwner candidate(socket(current->ai_family, current->ai_socktype, current->ai_protocol));
         if (!candidate.valid()) {
             continue;
@@ -557,14 +556,13 @@ bool webConnect::openHost(const std::uint16_t port, std::string bind_address) {
     return true;
 }
 
-bool webConnect::waitForPeer(const std::optional<std::chrono::milliseconds> timeout) {
+bool webConnect::waitForPeer(const std::optional<std::chrono::milliseconds> timeout) const {
     if (!impl_->listener.valid()) {
         impl_->last_error = "Host socket is not open.";
         return false;
     }
 
-    const auto wait_result = waitForReadable(impl_->listener.native(), timeout, impl_->last_error);
-    if (wait_result != WaitResult::Ready) {
+    if (const auto wait_result = waitForReadable(impl_->listener.native(), timeout, impl_->last_error); wait_result != WaitResult::Ready) {
         return false;
     }
 
@@ -583,8 +581,7 @@ bool webConnect::waitForPeer(const std::optional<std::chrono::milliseconds> time
     impl_->remote_endpoint = endpointToString(reinterpret_cast<const sockaddr*>(&address), length);
     queryEndpoint(impl_->peer.native(), true, impl_->local_endpoint);
 
-    const std::string hello = "HELLO 1 " + std::to_string(session_->board().getSize()) + ' ' + stoneToken(Stone::BLACK);
-    if (!impl_->sendLine(hello) || !syncSnapshot()) {
+    if (const std::string hello = "HELLO 1 " + std::to_string(session_->board().getSize()) + ' ' + "BLACK"; !impl_->sendLine(hello) || !syncSnapshot()) {
         disconnect();
         return false;
     }
@@ -594,7 +591,7 @@ bool webConnect::waitForPeer(const std::optional<std::chrono::milliseconds> time
     return true;
 }
 
-bool webConnect::connectTo(const std::string& host, const std::uint16_t port) {
+bool webConnect::connectTo(const std::string& host, const std::uint16_t port) const {
     disconnect();
     if (!ensureSocketRuntime(impl_->last_error)) {
         return false;
@@ -606,14 +603,13 @@ bool webConnect::connectTo(const std::string& host, const std::uint16_t port) {
 
     addrinfo* results = nullptr;
     const std::string service = std::to_string(port);
-    const int lookup_rc = getaddrinfo(host.c_str(), service.c_str(), &hints, &results);
-    if (lookup_rc != 0) {
+    if (const int lookup_rc = getaddrinfo(host.c_str(), service.c_str(), &hints, &results); lookup_rc != 0) {
         impl_->last_error = "getaddrinfo() failed for remote host: " + std::string(gai_strerror(lookup_rc));
         return false;
     }
 
     SocketOwner peer;
-    for (addrinfo* current = results; current != nullptr; current = current->ai_next) {
+    for (const addrinfo* current = results; current != nullptr; current = current->ai_next) {
         SocketOwner candidate(socket(current->ai_family, current->ai_socktype, current->ai_protocol));
         if (!candidate.valid()) {
             continue;
@@ -678,7 +674,7 @@ bool webConnect::connectTo(const std::string& host, const std::uint16_t port) {
     return true;
 }
 
-bool webConnect::sendLocalMove(const int x, const int y) {
+bool webConnect::sendLocalMove(const int x, const int y) const {
     if (!impl_->connected) {
         impl_->last_error = "Cannot send move without an active peer.";
         return false;
@@ -702,7 +698,7 @@ bool webConnect::sendLocalMove(const int x, const int y) {
     return true;
 }
 
-bool webConnect::requestUndo() {
+bool webConnect::requestUndo() const {
     if (!impl_->connected) {
         impl_->last_error = "Cannot request undo without an active peer.";
         return false;
@@ -722,7 +718,7 @@ bool webConnect::requestUndo() {
     return true;
 }
 
-bool webConnect::requestReset() {
+bool webConnect::requestReset() const {
     if (!impl_->connected) {
         impl_->last_error = "Cannot request reset without an active peer.";
         return false;
@@ -735,7 +731,7 @@ bool webConnect::requestReset() {
     return true;
 }
 
-bool webConnect::syncSnapshot() {
+bool webConnect::syncSnapshot() const {
     if (!impl_->connected) {
         impl_->last_error = "Cannot sync snapshot without an active peer.";
         return false;
@@ -747,14 +743,13 @@ bool webConnect::syncSnapshot() {
     return ok;
 }
 
-bool webConnect::pump(const std::chrono::milliseconds timeout) {
+bool webConnect::pump(const std::chrono::milliseconds timeout) const {
     if (!impl_->connected || !impl_->peer.valid()) {
         impl_->last_error = "Peer socket is not connected.";
         return false;
     }
 
-    const auto wait_result = waitForReadable(impl_->peer.native(), timeout, impl_->last_error);
-    if (wait_result != WaitResult::Ready) {
+    if (const auto wait_result = waitForReadable(impl_->peer.native(), timeout, impl_->last_error); wait_result != WaitResult::Ready) {
         return false;
     }
 
@@ -803,7 +798,7 @@ bool webConnect::pump(const std::chrono::milliseconds timeout) {
     return handled_packet;
 }
 
-void webConnect::disconnect() {
+void webConnect::disconnect() const {
     impl_->listener.reset();
     impl_->peer.reset();
     impl_->hosting = false;
