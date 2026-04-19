@@ -19,7 +19,7 @@ class Player {
 public:
     Player() = default;
 
-    static [[nodiscard]] MoveResult makeMove(const Board& board) ;
+    static MoveResult makeMove(const Board& board) ;
 };
 
 } // namespace gomoku::ai
