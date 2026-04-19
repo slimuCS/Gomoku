@@ -1159,7 +1159,7 @@ struct Controller::Impl {
             Elements box_content = {
                 text("Game Over") | hcenter | bold | color(Color::Red),
                 separator(),
-                text("Result: " + gameResultText(session.status())) | hcenter | color(Color::Blue),
+                text("Result: " + gameResultText(session.status())) | hcenter | color(Color::Cyan),
                 separator()
             };
             if (remote_mode_) {
