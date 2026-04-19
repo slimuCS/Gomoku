@@ -414,12 +414,46 @@ struct Controller::Impl {
         namespace fs = std::filesystem;
         save_files_.clear();
         load_selected_ = 0;
+        load_directory_error_ = false;
+        clearLocalStatus();
+
+        const fs::path saves_path(session.saves_dir());
         std::error_code ec;
-        for (const auto& entry : fs::directory_iterator(session.saves_dir(), ec)) {
+        const bool exists = fs::exists(saves_path, ec);
+        if (ec) {
+            load_directory_error_ = true;
+            setLocalStatus("Unable to inspect save directory: " + saves_path.string() + " (" + ec.message() + ")");
+            return;
+        }
+        if (!exists) {
+            return;
+        }
+
+        const bool is_directory = fs::is_directory(saves_path, ec);
+        if (ec) {
+            load_directory_error_ = true;
+            setLocalStatus("Unable to inspect save directory: " + saves_path.string() + " (" + ec.message() + ")");
+            return;
+        }
+        if (!is_directory) {
+            load_directory_error_ = true;
+            setLocalStatus("Save path is not a directory: " + saves_path.string());
+            return;
+        }
+
+        for (fs::directory_iterator it(saves_path, ec), end; !ec && it != end; it.increment(ec)) {
+            const auto& entry = *it;
             if (entry.path().extension() == ".gomoku") {
                 save_files_.push_back(entry.path().string());
             }
         }
+        if (ec) {
+            save_files_.clear();
+            load_directory_error_ = true;
+            setLocalStatus("Unable to read save directory: " + saves_path.string() + " (" + ec.message() + ")");
+            return;
+        }
+
         std::sort(save_files_.begin(), save_files_.end(), std::greater<>());
     }
 
@@ -433,7 +467,9 @@ struct Controller::Impl {
             };
 
             if (save_files_.empty()) {
-                content.push_back(text("No saves found in: " + session.saves_dir()) | dim | hcenter);
+                if (!load_directory_error_) {
+                    content.push_back(text("No saves found in: " + session.saves_dir()) | dim | hcenter);
+                }
                 if (!local_status_text_.empty()) {
                     content.push_back(separator());
                     content.push_back(text(local_status_text_) | color(local_status_color_) | hcenter);
@@ -757,7 +793,6 @@ struct Controller::Impl {
         };
 
         auto undo_checkbox = Checkbox("Undo", &settings_undo_enabled, cb_opt);
-        auto timer_checkbox = Checkbox("Move Timer", &settings_timer_enabled, cb_opt);
 
         ButtonOption btn_opt;
         btn_opt.transform = [](const EntryState& state) {
@@ -769,7 +804,7 @@ struct Controller::Impl {
         };
         auto back_button = Button("Back", [this] { active_index = previous_tab; }, btn_opt);
 
-        auto checkboxes = Container::Vertical({undo_checkbox, timer_checkbox});
+        auto checkboxes = Container::Vertical({undo_checkbox});
         auto container = Container::Vertical({checkboxes, back_button});
 
         return Renderer(container, [checkboxes, back_button, this] {
@@ -1053,7 +1088,6 @@ struct Controller::Impl {
     int current_y = 0;
 
     bool settings_undo_enabled = true;
-    bool settings_timer_enabled = false;
 
     bool show_save_menu_ = false;
     int save_menu_selected_ = 0;
@@ -1066,6 +1100,7 @@ struct Controller::Impl {
     std::string remote_status_text_;
     std::string local_status_text_;
     Color local_status_color_ = Color::GrayDark;
+    bool load_directory_error_ = false;
     std::string remote_host_input_ = "127.0.0.1";
     std::string remote_port_input_ = "7777";
 };
