@@ -17,7 +17,6 @@
 #include <memory>
 #include <optional>
 #include <string>
-#include <optional>
 #include <thread>
 #include <unordered_map>
 #include <utility>
@@ -107,7 +106,7 @@ Element stoneCellElement(const gomoku::Stone stone) {
 
 std::string trimCopy(std::string value) {
     const auto is_space = [](const unsigned char ch) { return std::isspace(ch) != 0; };
-    value.erase(value.begin(), std::find_if(value.begin(), value.end(), [&](const unsigned char ch) {
+    value.erase(value.begin(), std::ranges::find_if(value, [&](const unsigned char ch) {
         return !is_space(ch);
     }));
     value.erase(std::find_if(value.rbegin(), value.rend(), [&](const unsigned char ch) {
@@ -664,7 +663,7 @@ struct Controller::Impl {
             return;
         }
 
-        std::sort(save_files_.begin(), save_files_.end(), std::greater<>());
+        std::ranges::sort(save_files_, std::greater<>());
     }
 
     Component renderLoadGamePage() {
@@ -798,6 +797,7 @@ struct Controller::Impl {
                 case 3: // Cancel
                     show_save_menu_ = false;
                     break;
+                default: ;
             }
             return true;
         }
@@ -842,7 +842,7 @@ struct Controller::Impl {
         return true;
     }
 
-    void setStatusMsg(const std::string& msg, int ms = 1500) {
+    void setStatusMsg(const std::string& msg, const int ms = 1500) {
         status_msg_ = msg;
         status_msg_until_ = std::chrono::steady_clock::now() + std::chrono::milliseconds(ms);
     }
@@ -1093,7 +1093,7 @@ struct Controller::Impl {
         };
         auto back_button = Button("Ok", [this] {
             if (pending_mode_.has_value()) {
-                auto mode = *pending_mode_;
+                const auto mode = *pending_mode_;
                 pending_mode_.reset();
                 startGame(mode);
             } else {
@@ -1128,7 +1128,7 @@ struct Controller::Impl {
                 hbox({ timer_checkbox->Render(), timer_row }),
             });
 
-            auto settings_box = vbox({
+            const auto settings_box = vbox({
                 text("Briefing") | hcenter | bold | color(Color::Cyan),
                 separator(),
                 how_to_play,
@@ -1171,7 +1171,7 @@ struct Controller::Impl {
             box_content.push_back(separator());
             box_content.push_back(text(" \u2191\u2193 Move  Enter Confirm ") | dim | hcenter);
 
-            auto result_box = vbox(std::move(box_content)) | border | center;
+            const auto result_box = vbox(std::move(box_content)) | border | center;
             return dbox({ renderGrid(), result_box | clear_under | center });
         };
 
@@ -1386,8 +1386,7 @@ struct Controller::Impl {
             hint_text = "  Hurry up! You'll get skipped!  ";
             hint_is_status = true;
         } else {
-            const auto msg = activeStatusMsg();
-            if (!msg.empty()) {
+            if (const auto msg = activeStatusMsg(); !msg.empty()) {
                 hint_text = "  " + msg + "  ";
                 hint_is_status = true;
             } else {
@@ -1396,9 +1395,8 @@ struct Controller::Impl {
         }
         
         // Pad or truncate to fixed width to prevent layout shift
-        const int kHintLineWidth = 45;
-        if (static_cast<int>(hint_text.length()) < kHintLineWidth) {
-            const int padding = kHintLineWidth - hint_text.length();
+        if (constexpr int kHintLineWidth = 45; static_cast<int>(hint_text.length()) < kHintLineWidth) {
+            const int padding = kHintLineWidth - static_cast<int>(hint_text.length());
             const int left_pad = padding / 2;
             const int right_pad = padding - left_pad;
             hint_text = std::string(left_pad, ' ') + hint_text + std::string(right_pad, ' ');

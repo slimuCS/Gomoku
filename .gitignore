@@ -1,0 +1,57 @@
+# IDE and editor settings
+/.idea/
+/.vscode/
+*.suo
+*.user
+*.userossc
+*.VC.db
+
+# Python local environments
+/.venv/
+/.python-version
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# CMake and build directories
+/build*/
+/cmake-build-*/
+/out/
+/dist/
+CMakeCache.txt
+CMakeFiles/
+CTestTestfile.cmake
+Testing/
+cmake_install.cmake
+compile_commands.json
+CPackConfig.cmake
+CPackSourceConfig.cmake
+install_manifest.txt
+Makefile
+
+# Native build outputs
+*.a
+*.lib
+*.o
+*.obj
+*.pdb
+*.ilk
+*.dll
+*.so
+*.dylib
+*.exe
+
+# Local test binaries
+/tests/*.wsl
+
+# Runtime logs and generated data
+*.log
+ai_debug.log
+training_log.jsonl
+/checkpoints/
+/saves/
+
+# OS cruft
+.DS_Store
+Thumbs.db

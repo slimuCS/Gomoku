@@ -94,7 +94,7 @@ bool GameSession::ai_move() {
         return false;
     }
 
-    const auto [move, used_fallback, diagnostic] = ai_player_.makeMove(board_);
+    const auto [move, used_fallback, diagnostic] = gomoku::ai::Player::makeMove(board_);
     ai_used_fallback_ = used_fallback;
 
     if (!move) {
