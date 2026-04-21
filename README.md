@@ -249,29 +249,56 @@ Gomoku/
 
 ## 快速開始
 
-有兩種方式，擇一即可：
+有三種方式，擇一即可：
 
 | 方式 | 適合對象 |
 |------|---------|
-| [方案 A：使用 Visual Studio（推薦）](#方案-a--使用-visual-studio-推薦) | 已有或打算安裝 Visual Studio 的人，一鍵開啟最省事 |
+| [最快捷：winget 一鍵安裝](#最快捷--winget-一鍵安裝-windows-11-內建) | Windows 11 全新電腦，想最少步驟搞定 |
+| [方案 A：使用 Visual Studio](#方案-a--使用-visual-studio) | 已有 Visual Studio，或想要完整 IDE 體驗 |
 | [方案 B：命令列（CMake + 任意編譯器）](#方案-b--命令列-cmake--任意編譯器) | 只想裝最少工具，或使用 VSCode / 其他編輯器 |
 
 ---
 
-### 方案 A — 使用 Visual Studio（推薦）
+### 最快捷 — winget 一鍵安裝（Windows 11 內建）
+
+Windows 11 已內建 `winget`，不需要自己去網站下載安裝程式。
+
+以**系統管理員**身分開啟 PowerShell，依序貼上：
+
+```powershell
+# 1. 安裝 Git
+winget install Git.Git
+
+# 2. 安裝 Visual Studio 2022 Community（含 C++ 工作負載，約 6–10 GB）
+winget install Microsoft.VisualStudio.2022.Community --override "--add Microsoft.VisualStudio.Workload.NativeDesktop --quiet --wait"
+```
+
+> 安裝完成後需**重新開啟 PowerShell** 讓 PATH 生效。
+
+接著複製並開啟專案：
+
+```powershell
+# 3. 複製專案
+git clone https://github.com/<your-username>/oop_gomoku.git
+```
+
+然後按照下方「[開啟與啟動](#開啟與啟動)」的步驟，用 Visual Studio 開啟資料夾並按 F5 即可。
+
+---
+
+### 方案 A — 使用 Visual Studio
 
 #### 前置條件
 
-安裝 **Visual Studio 2019 或 2022**（Community 版免費）：
+若尚未安裝 Visual Studio，請依上方 winget 方式安裝，或：
 
 1. 前往 <https://visualstudio.microsoft.com/> 下載 Visual Studio Installer
 2. 執行 Installer，勾選 **「使用 C++ 的桌面開發」** 工作負載
-   - 這個工作負載已內含 MSVC 編譯器與 CMake 工具，不需另外安裝
 3. 點擊「安裝」，等待完成（約 6–10 GB）
 
 #### 複製專案
 
-用 Git Bash 或 PowerShell 執行：
+用 PowerShell 執行：
 
 ```powershell
 git clone https://github.com/<your-username>/oop_gomoku.git
@@ -279,7 +306,7 @@ git clone https://github.com/<your-username>/oop_gomoku.git
 
 > 若尚未安裝 Git，請先至 <https://git-scm.com/download/win> 下載並安裝（保持預設值即可）。
 
-#### 開啟與啟動
+#### 開啟與啟動 {#開啟與啟動}
 
 1. 開啟 Visual Studio
 2. 選擇 **「開啟本機資料夾」**（Open a local folder）
