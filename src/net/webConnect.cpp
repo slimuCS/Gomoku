@@ -540,14 +540,18 @@ bool webConnect::openHost(const std::uint16_t port, const std::string& bind_addr
         return false;
     }
 
+    const bool use_default_ipv4_bind = bind_address.empty() || bind_address == "0.0.0.0";
+
     addrinfo hints{};
-    hints.ai_family = AF_UNSPEC;
+    // Prefer IPv4 for the default host flow so peers can connect via typical LAN IPv4 addresses.
+    // On some platforms, AF_UNSPEC + AI_PASSIVE may pick an IPv6-only listener first.
+    hints.ai_family = use_default_ipv4_bind ? AF_INET : AF_UNSPEC;
     hints.ai_socktype = SOCK_STREAM;
     hints.ai_flags = AI_PASSIVE;
 
     addrinfo* results = nullptr;
     const std::string service = std::to_string(port);
-    const char* host = (bind_address.empty() || bind_address == "0.0.0.0") ? nullptr : bind_address.c_str();
+    const char* host = use_default_ipv4_bind ? nullptr : bind_address.c_str();
     if (const int lookup_rc = getaddrinfo(host, service.c_str(), &hints, &results); lookup_rc != 0) {
         impl_->last_error = "getaddrinfo() failed for host bind: " + std::string(gai_strerror(lookup_rc));
         return false;
