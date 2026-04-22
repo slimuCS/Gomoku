@@ -464,7 +464,7 @@ Component Controller::Impl::renderSetupPage() {
             timer_row = timer_row | dim;
         }
 
-        auto how_to_play = vbox({
+        const auto how_to_play = vbox({
             text("\u2500\u2500 How to Play \u2500\u2500") | bold | color(Color::Cyan),
             text("\u00b7 Get 5 in a row to win") | dim,
             text("  (horizontal / vertical / diagonal)") | dim,
@@ -474,7 +474,7 @@ Component Controller::Impl::renderSetupPage() {
             text("U Undo   S Setup   L Leave/Save") | dim,
         });
 
-        auto setup_box = vbox({
+        const auto setup_box = vbox({
             text("\u2500\u2500 Setup \u2500\u2500") | bold | color(Color::Cyan),
             undo_checkbox->Render(),
             hbox({timer_checkbox->Render(), timer_row}),
@@ -822,8 +822,7 @@ Element Controller::Impl::renderGrid() const {
         hint_text = "\u2191\u2193\u2190\u2192 Move  |  [Enter]/[Space] Place   ";
     }
 
-    constexpr int kHintLineWidth = 45;
-    if (static_cast<int>(hint_text.length()) < kHintLineWidth) {
+    if (constexpr int kHintLineWidth = 45; static_cast<int>(hint_text.length()) < kHintLineWidth) {
         const int padding = kHintLineWidth - static_cast<int>(hint_text.length());
         const int left_pad = padding / 2;
         const int right_pad = padding - left_pad;
