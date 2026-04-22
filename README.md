@@ -267,10 +267,16 @@ Windows 11 已內建 `winget`，不需要自己去網站下載安裝程式。
 
 ```powershell
 # 1. 安裝 Git
-winget install Git.Git
+winget install Git.Git --source winget
 
 # 2. 安裝 Visual Studio 2022 Community（含 C++ 工作負載，約 6–10 GB）
-winget install Microsoft.VisualStudio.2022.Community --override "--add Microsoft.VisualStudio.Workload.NativeDesktop --quiet --wait"
+winget install Microsoft.VisualStudio.2022.Community --source winget --override "--add Microsoft.VisualStudio.Workload.NativeDesktop --quiet --wait"
+```
+
+安裝完成後確認：
+
+```powershell
+winget list Microsoft.VisualStudio.2022.Community
 ```
 
 > 安裝完成後需**重新開啟 PowerShell** 讓 PATH 生效。
@@ -313,12 +319,16 @@ git clone https://github.com/<your-username>/oop_gomoku.git
 3. 選取 `oop_gomoku\Gomoku\` 資料夾（就是含有 `CMakeLists.txt` 的那層）
 4. VS 會自動偵測 CMake 並執行 Configure，底部輸出視窗會顯示 FTXUI 下載進度
    - 首次需要網路，約等待 30 秒
-5. Configure 完成後，點擊上方工具列的**啟動目標下拉選單**，選擇 `Gomoku_Project.exe`
+   - 若底部沒有動靜，請點選單 **「專案」→「刪除快取並重新設定」** 手動觸發
+5. Configure 完成後，點擊上方工具列綠色箭頭**旁邊的下拉選單**，選擇 `Gomoku_Project.exe`
+   - 若下拉清單是空的，代表 Configure 還沒跑完，請等候底部輸出出現 `Configuring done`
 6. 按 **F5** 或綠色箭頭 ▶ — VS 會自動 Build 再執行
 
 程式啟動後即可在終端機視窗中操作。
 
 > **提示**：之後每次開啟只需重複步驟 1–3，再按 F5 即可，Configure 不會重複執行。
+>
+> **VS 2019 使用者**：若遇到 `could not find git for clone of ftxui` 錯誤，請完全關閉 VS 後重新開啟，讓它吃到安裝 Git 後的新 PATH。
 
 ---
 
@@ -474,11 +484,21 @@ ctest --test-dir cmake-build-debug --output-on-failure
 
 ## 音效資源
 
-程式會嘗試載入 `assets/audio/` 下列檔案：
+音效檔位於 `assets/audio/`，Build 完成後會自動複製到執行檔同目錄：
 
-- `backGround.mp3`
-- `click.mp3`
-- `placeStoneVoice.mp3`
+| 檔案 | 用途 |
+|------|------|
+| `backGround.mp3` | 背景音樂循環 |
+| `click.mp3` | 選單按鈕點擊音 |
+| `placeStoneVoice.mp3` | 落子音效 |
+| `selected.mp3` | UI 選取回饋音 |
+| `victory.mp3` | 勝利音效 |
+| `defeat.mp3` | 失敗音效 |
+| `do.wav` | 提示音 |
+| `movechess.wav` | 移動棋子音 |
+| `dead.ogg` | 特殊事件音效 |
+
+> 音效檔缺少時程式不會崩潰，僅靜音播放。
 
 ## 專案結構
 
@@ -486,10 +506,19 @@ ctest --test-dir cmake-build-debug --output-on-failure
 Gomoku/
 ├── CMakeLists.txt
 ├── README.md
-├── docs/
+├── doc/                          # 詳細設計文件
+│   ├── design.md
+│   ├── notes.md
 │   ├── scoring.md
-│   └── screenshots/
+│   ├── packaging.md
+│   ├── detail-guide.md
+│   ├── rulecheck.md
+│   ├── todolist.md
+│   └── c-log.md
+├── docs/
+│   └── scoring.md
 ├── include/gomoku/
+│   ├── miniaudio.h               # 音效後端（header-only）
 │   ├── ai/
 │   ├── audio/
 │   ├── core/
@@ -502,8 +531,13 @@ Gomoku/
 │   ├── core/
 │   ├── net/
 │   └── ui/
+│       ├── ui_controller.cpp
+│       ├── ui_controller_state.cpp
+│       └── ui_controller_views.cpp
 ├── assets/
-│   └── audio/
+│   └── audio/                    # 9 個音效檔
+├── saves/                        # 自動產生的存檔
 └── tests/
-    └── regression_tests.cpp
+    ├── regression_tests.cpp      # 遠端同步 & 存檔測試
+    └── rulecheck_tests.cpp       # 規則驗證測試
 ```
