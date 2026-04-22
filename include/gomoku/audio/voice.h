@@ -32,6 +32,10 @@ public:
 
     static void defeatSound();
 
+    static void menuMoveSound();
+
+    static void selectedSound();
+
     static void stopBackgroundMusic();
 private:
 };

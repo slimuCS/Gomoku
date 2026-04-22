@@ -1,4 +1,5 @@
 #include "../../include/gomoku/ui/ui_controller_internal.h"
+#include "../../include/gomoku/audio/voice.h"
 
 namespace UI {
 using namespace ftxui;
@@ -79,6 +80,7 @@ Component Controller::Impl::renderReplayPage() {
         if (event == Event::Special("replay_tick")) {
             if (replay_auto_ && replay_step_ < max_step) {
                 ++replay_step_;
+                voice::placeStoneSound();
                 if (replay_step_ == max_step) {
                     stopReplayAuto();
                 }
@@ -86,6 +88,7 @@ Component Controller::Impl::renderReplayPage() {
             return true;
         }
         if (event == Event::Escape) {
+            voice::selectedSound();
             stopReplayAuto();
             result_selected_ = 0;
             active_index = detail::kResultTab;
@@ -95,21 +98,27 @@ Component Controller::Impl::renderReplayPage() {
             if (replay_step_ > 0) {
                 --replay_step_;
             }
+            voice::menuMoveSound();
             return true;
         }
         if (event == Event::ArrowRight) {
             if (replay_step_ < max_step) {
                 ++replay_step_;
+                voice::placeStoneSound();
+            } else {
+                voice::menuMoveSound();
             }
             return true;
         }
         if (event == Event::Character('r') || event == Event::Character('R')) {
+            voice::selectedSound();
             replay_step_ = 0;
             stopReplayAuto();
             startReplayAuto();
             return true;
         }
         if (event == Event::Character(' ')) {
+            voice::selectedSound();
             if (replay_auto_) {
                 stopReplayAuto();
             } else {
@@ -168,6 +177,7 @@ Component Controller::Impl::renderLoadGamePage() {
 
     component->event_logic = [this](const Event& event) {
         if (event == Event::Escape) {
+            voice::selectedSound();
             active_index = detail::kMenuTab;
             return true;
         }
@@ -175,15 +185,18 @@ Component Controller::Impl::renderLoadGamePage() {
             if (!save_files_.empty()) {
                 load_selected_ = std::max(0, load_selected_ - 1);
             }
+            voice::menuMoveSound();
             return true;
         }
         if (event == Event::ArrowDown) {
             if (!save_files_.empty()) {
                 load_selected_ = std::min(static_cast<int>(save_files_.size()) - 1, load_selected_ + 1);
             }
+            voice::menuMoveSound();
             return true;
         }
         if (event == Event::Return && !save_files_.empty()) {
+            voice::selectedSound();
             if (session.deserialize(save_files_[load_selected_])) {
                 shutdownRemoteSession();
                 clearLocalStatus();
@@ -223,15 +236,24 @@ Component Controller::Impl::renderFrontPage() {
     component |= CatchEvent([this, menu](const Event& event) {
         const int menu_count = static_cast<int>(menu_entries.size());
         if (menu_count > 0 && event == Event::ArrowUp && menu_selected == 0) {
+            voice::menuMoveSound();
             return menu->OnEvent(Event::End);
         }
         if (menu_count > 0 && event == Event::ArrowDown && menu_selected == menu_count - 1) {
+            voice::menuMoveSound();
             return menu->OnEvent(Event::Home);
+        }
+
+        if (event == Event::ArrowUp || event == Event::ArrowDown) {
+            voice::menuMoveSound();
+            return false;
         }
 
         if (event != Event::Return) {
             return false;
         }
+
+        voice::selectedSound();
 
         if (menu_selected == 0) {
             pending_mode_ = gomoku::SessionMode::PVP;
@@ -303,11 +325,13 @@ Component Controller::Impl::renderGameBoard(const bool has_ai) {
         }
 
         if (remote_mode_ && (event == Event::Character('q') || event == Event::Character('Q'))) {
+            voice::selectedSound();
             backToMenu();
             return true;
         }
 
         if (event == Event::Character('l') || event == Event::Character('L')) {
+            voice::selectedSound();
             if (remote_mode_) {
                 updateRemoteStatus("Save/Leave is disabled during remote games. Press Q to disconnect.");
                 return true;
@@ -318,6 +342,7 @@ Component Controller::Impl::renderGameBoard(const bool has_ai) {
         }
 
         if (event == Event::Character('s') || event == Event::Character('S')) {
+            voice::selectedSound();
             pending_mode_.reset();
             settings_focus_ = 0;
             previous_tab = active_index;
@@ -326,6 +351,7 @@ Component Controller::Impl::renderGameBoard(const bool has_ai) {
         }
 
         if (event == Event::Character('u') || event == Event::Character('U')) {
+            voice::selectedSound();
             if (!settings_undo_enabled) {
                 setStatusMsg("Undo is disabled (enable in Setup)", 2000);
                 return true;
@@ -372,6 +398,7 @@ Component Controller::Impl::renderGameBoard(const bool has_ai) {
                 updateRemoteStatus("Move failed: " + network.lastError());
                 return true;
             }
+            voice::placeStoneSound();
             clearLocalStatus();
             syncCursorToSession();
             updateRemoteStatus();
@@ -385,6 +412,7 @@ Component Controller::Impl::renderGameBoard(const bool has_ai) {
             return true;
         }
 
+        voice::placeStoneSound();
         clearLocalStatus();
         consecutive_timeouts_ = 0;
         stopTimer();
@@ -454,7 +482,7 @@ Component Controller::Impl::renderSetupPage() {
     auto checkboxes = Container::Vertical({undo_checkbox, timer_checkbox, timer_input});
     auto container = Container::Vertical({checkboxes, back_button}, &settings_focus_);
 
-    return Renderer(container, [this, undo_checkbox, timer_checkbox, timer_input, back_button] {
+    auto component = Renderer(container, [this, undo_checkbox, timer_checkbox, timer_input, back_button] {
         auto timer_row = hbox({
             text("    "),
             timer_input->Render() | size(WIDTH, EQUAL, 4),
@@ -497,6 +525,20 @@ Component Controller::Impl::renderSetupPage() {
         const auto settings_box = vbox(std::move(settings_content)) | border | center;
         return dbox({renderGrid(), settings_box | clear_under | center});
     });
+
+    component |= CatchEvent([](const Event& event) {
+        if (event == Event::ArrowUp || event == Event::ArrowDown) {
+            voice::menuMoveSound();
+            return false;
+        }
+        if (event == Event::Return || event == Event::Character(' ')) {
+            voice::selectedSound();
+            return false;
+        }
+        return false;
+    });
+
+    return component;
 }
 
 Component Controller::Impl::renderEndPage() {
@@ -542,13 +584,16 @@ Component Controller::Impl::renderEndPage() {
         constexpr int kNumOptions = 4;
         if (event == Event::ArrowUp) {
             result_selected_ = (result_selected_ - 1 + kNumOptions) % kNumOptions;
+            voice::menuMoveSound();
             return true;
         }
         if (event == Event::ArrowDown) {
             result_selected_ = (result_selected_ + 1) % kNumOptions;
+            voice::menuMoveSound();
             return true;
         }
         if (event == Event::Return) {
+            voice::selectedSound();
             if (result_selected_ == 0) {
                 backToMenu();
             } else if (result_selected_ == 1) {
@@ -603,7 +648,12 @@ Component Controller::Impl::renderRemoteHostPage() {
     });
 
     component |= CatchEvent([this](const Event& event) {
+        if (event == Event::ArrowUp || event == Event::ArrowDown) {
+            voice::menuMoveSound();
+            return false;
+        }
         if (event == Event::Escape) {
+            voice::selectedSound();
             backToMenu();
             return true;
         }
@@ -640,7 +690,12 @@ Component Controller::Impl::renderRemoteJoinPage() {
     });
 
     component |= CatchEvent([this](const Event& event) {
+        if (event == Event::ArrowUp || event == Event::ArrowDown) {
+            voice::menuMoveSound();
+            return false;
+        }
         if (event == Event::Escape) {
+            voice::selectedSound();
             backToMenu();
             return true;
         }
@@ -678,6 +733,7 @@ Component Controller::Impl::renderRemoteWaitPage() {
 
     component |= CatchEvent([this](const Event& event) {
         if (event == Event::Escape) {
+            voice::selectedSound();
             backToMenu();
             return true;
         }

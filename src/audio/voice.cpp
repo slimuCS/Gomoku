@@ -165,7 +165,15 @@ void voice::backGroundMusic() {
 }
 
 void voice::placeStoneSound() {
-    playAudioFile("placeStoneVoice.mp3");
+    playAudioFile("movechess.wav");
+}
+
+void voice::menuMoveSound() {
+    playAudioFile("do.wav");
+}
+
+void voice::selectedSound() {
+    playAudioFile("selected.mp3");
 }
 
 void voice::victorySound() {

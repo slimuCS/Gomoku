@@ -538,28 +538,34 @@ bool Controller::Impl::handleSaveMenuEvent(const Event& event) {
 
     if (event == Event::ArrowUp) {
         save_menu_selected_ = (save_menu_selected_ + kSaveMenuItems - 1) % kSaveMenuItems;
+        voice::menuMoveSound();
         return true;
     }
     if (event == Event::ArrowDown) {
         save_menu_selected_ = (save_menu_selected_ + 1) % kSaveMenuItems;
+        voice::menuMoveSound();
         return true;
     }
     if (event == Event::Escape || event == Event::Character('e') || event == Event::Character('E')) {
+        voice::selectedSound();
         show_save_menu_ = false;
         return true;
     }
     if (event == Event::Character('s') || event == Event::Character('S')) {
+        voice::selectedSound();
         if (trySaveSessionWithFeedback()) {
             show_save_menu_ = false;
         }
         return true;
     }
     if (event == Event::Character('l') || event == Event::Character('L')) {
+        voice::selectedSound();
         show_save_menu_ = false;
         backToMenu();
         return true;
     }
     if (event == Event::Return) {
+        voice::selectedSound();
         switch (save_menu_selected_) {
             case 0:
                 if (trySaveSessionWithFeedback()) {
@@ -619,19 +625,20 @@ void Controller::Impl::tryMoveToResult() {
             ? gomoku::Stone::BLACK
             : gomoku::Stone::WHITE;
 
-        bool local_won = false;
         if (remote_mode_) {
-            local_won = winning_stone == network.localStone();
+            if (winning_stone == network.localStone()) {
+                voice::victorySound();
+            } else {
+                voice::defeatSound();
+            }
         } else if (active_index == detail::kPveTab) {
-            local_won = winning_stone == gomoku::Stone::BLACK;
+            if (winning_stone == gomoku::Stone::BLACK) {
+                voice::victorySound();
+            } else {
+                voice::defeatSound();
+            }
         } else {
-            local_won = winning_stone == gomoku::Stone::BLACK;
-        }
-
-        if (local_won) {
             voice::victorySound();
-        } else {
-            voice::defeatSound();
         }
     }
 
