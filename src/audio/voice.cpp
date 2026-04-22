@@ -16,13 +16,21 @@
 
 #include <filesystem>
 #include <iostream>
+#include <optional>
 #include <string>
+#include <unordered_set>
+#include <vector>
 
 #ifdef _WIN32
 #include <windows.h>
 #endif
 
 namespace fs = std::filesystem;
+
+static ma_engine engine;
+static ma_sound g_bgm;
+static bool g_isInitalized = false;
+static bool g_hasBgm = false;
 
 namespace {
 
@@ -36,16 +44,67 @@ fs::path executableDir() {
 #endif
 }
 
-std::string assetPath(const char* filename) {
-    return (executableDir() / "assets" / "audio" / filename).lexically_normal().string();
+std::vector<fs::path> assetRoots() {
+    const fs::path exe_dir = executableDir();
+
+    std::vector<fs::path> roots = {
+        exe_dir / "assets" / "audio",
+        exe_dir.parent_path() / "assets" / "audio",
+        exe_dir.parent_path().parent_path() / "assets" / "audio",
+        fs::current_path() / "assets" / "audio",
+    };
+
+#ifdef GOMOKU_SOURCE_DIR
+    roots.push_back(fs::path(GOMOKU_SOURCE_DIR) / "assets" / "audio");
+#endif
+
+    return roots;
+}
+
+std::optional<std::string> assetPath(const char* filename) {
+    for (const auto& root : assetRoots()) {
+        const fs::path candidate = (root / filename).lexically_normal();
+        std::error_code ec;
+        if (fs::exists(candidate, ec) && !ec) {
+            return candidate.string();
+        }
+    }
+    return std::nullopt;
+}
+
+void logAudioAssetFailureOnce(const std::string& key, const std::string& detail) {
+    static std::unordered_set<std::string> reported_failures;
+    if (reported_failures.insert(key).second) {
+        std::cerr << detail << std::endl;
+    }
+}
+
+bool playAudioFile(const char* filename) {
+    if (!g_isInitalized) {
+        return false;
+    }
+
+    const auto path = assetPath(filename);
+    if (!path.has_value()) {
+        logAudioAssetFailureOnce(
+            filename,
+            "Audio asset not found: " + std::string(filename) + ". Checked executable, working directory, and source tree asset folders."
+        );
+        return false;
+    }
+
+    if (const ma_result result = ma_engine_play_sound(&engine, path->c_str(), nullptr); result != MA_SUCCESS) {
+        logAudioAssetFailureOnce(
+            std::string("play:") + filename,
+            "Failed to play audio asset " + std::string(filename) + ": miniaudio error " + std::to_string(result)
+        );
+        return false;
+    }
+
+    return true;
 }
 
 } // namespace
-
-static ma_engine engine;
-static ma_sound g_bgm;
-static bool g_isInitalized = false;
-static bool g_hasBgm = false;
 
 voice gameVoice;
 
@@ -61,11 +120,25 @@ bool voice::initAudioSystem() {
     }
 
     const auto bgm_path = assetPath("backGround.mp3");
-    result = ma_sound_init_from_file(&engine, bgm_path.c_str(), MA_SOUND_FLAG_STREAM, nullptr, nullptr, &g_bgm);
+    if (!bgm_path.has_value()) {
+        logAudioAssetFailureOnce(
+            "backGround.mp3",
+            "Audio asset not found: backGround.mp3. Background music will be disabled."
+        );
+        g_isInitalized = true;
+        return true;
+    }
+
+    result = ma_sound_init_from_file(&engine, bgm_path->c_str(), MA_SOUND_FLAG_STREAM, nullptr, nullptr, &g_bgm);
 
     g_hasBgm = (result == MA_SUCCESS);
     if (g_hasBgm) {
         ma_sound_set_looping(&g_bgm, true);
+    } else {
+        logAudioAssetFailureOnce(
+            "bgm_init",
+            "Failed to initialize background music: miniaudio error " + std::to_string(result)
+        );
     }
     g_isInitalized = true;
     return true;
@@ -83,9 +156,7 @@ void voice::cleanupAudioSystem() {
 }
 
 void voice::clickSound() {
-    if (!g_isInitalized) return;
-    const auto click_path = assetPath("click.mp3");
-    ma_engine_play_sound(&engine, click_path.c_str(), nullptr);
+    playAudioFile("click.mp3");
 }
 
 void voice::backGroundMusic() {
@@ -94,21 +165,15 @@ void voice::backGroundMusic() {
 }
 
 void voice::placeStoneSound() {
-    if (!g_isInitalized) return;
-    const auto place_stone_path = assetPath("placeStoneVoice.mp3");
-    ma_engine_play_sound(&engine, place_stone_path.c_str(), nullptr);
+    playAudioFile("placeStoneVoice.mp3");
 }
 
 void voice::victorySound() {
-    if (!g_isInitalized) return;
-    const auto path = assetPath("victory.mp3");
-    ma_engine_play_sound(&engine, path.c_str(), nullptr);
+    playAudioFile("victory.mp3");
 }
 
 void voice::defeatSound() {
-    if (!g_isInitalized) return;
-    const auto path = assetPath("defeat.mp3");
-    ma_engine_play_sound(&engine, path.c_str(), nullptr);
+    playAudioFile("defeat.mp3");
 }
 
 void voice::stopBackgroundMusic() {

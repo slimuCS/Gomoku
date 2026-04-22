@@ -45,6 +45,12 @@ target_link_libraries(Gomoku_Project PRIVATE
         gomoku_core
 )
 
+add_custom_command(TARGET Gomoku_Project POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E copy_directory
+        ${CMAKE_CURRENT_SOURCE_DIR}/assets
+        $<TARGET_FILE_DIR:Gomoku_Project>/assets
+)
+
 if(WIN32)
     target_link_libraries(Gomoku_Project PRIVATE ws2_32)
 endif()
