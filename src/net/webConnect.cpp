@@ -122,8 +122,7 @@ void appendUniqueEndpoint(std::vector<std::string>& endpoints,
         return;
     }
 
-    const std::string endpoint = formatEndpoint(host, service);
-    if (std::find(endpoints.begin(), endpoints.end(), endpoint) == endpoints.end()) {
+    if (const std::string endpoint = formatEndpoint(host, service); std::ranges::find(endpoints, endpoint) == endpoints.end()) {
         endpoints.push_back(endpoint);
     }
 }
@@ -377,14 +376,14 @@ bool queryEndpoint(const SocketHandle socket, const bool local, std::string& out
 }
 
 [[nodiscard]] std::string buildHelloLine(const GameSession& session, const Stone host_stone) {
-    const auto& rules = session.rules();
+    const auto&[undo_enabled, timer_enabled, timer_seconds] = session.rules();
     std::ostringstream stream;
     stream << "HELLO 2 "
            << session.board().getSize() << ' '
            << stoneToken(host_stone) << ' '
-           << (rules.undo_enabled ? 1 : 0) << ' '
-           << (rules.timer_enabled ? 1 : 0) << ' '
-           << rules.timer_seconds;
+           << (undo_enabled ? 1 : 0) << ' '
+           << (timer_enabled ? 1 : 0) << ' '
+           << timer_seconds;
     return stream.str();
 }
 
@@ -500,7 +499,7 @@ bool applyConfigPacket(GameSession& session,
         return false;
     }
 
-    session.setRules(std::move(rules));
+    session.setRules(rules);
     return true;
 }
 

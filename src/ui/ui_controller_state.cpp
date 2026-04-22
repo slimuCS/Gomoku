@@ -93,15 +93,14 @@ gomoku::SessionRules Controller::Impl::currentUiRules() const {
 }
 
 void Controller::Impl::syncSettingsFromSession() {
-    const auto& rules = session.rules();
-    settings_undo_enabled = rules.undo_enabled;
-    settings_timer_enabled = rules.timer_enabled;
-    settings_timer_seconds_str_ = std::to_string(rules.timer_seconds);
+    const auto&[undo_enabled, timer_enabled, timer_seconds] = session.rules();
+    settings_undo_enabled = undo_enabled;
+    settings_timer_enabled = timer_enabled;
+    settings_timer_seconds_str_ = std::to_string(timer_seconds);
 }
 
 bool Controller::Impl::shouldRunTimer() const {
-    const auto& rules = session.rules();
-    if (!rules.timer_enabled || show_save_menu_ || session.status() != gomoku::GameStatus::PLAYING) {
+    if (const auto& rules = session.rules(); !rules.timer_enabled || show_save_menu_ || session.status() != gomoku::GameStatus::PLAYING) {
         return false;
     }
 
@@ -131,10 +130,9 @@ std::vector<std::string> Controller::Impl::shareableHostEndpoints() const {
         return endpoints;
     }
 
-    const std::string endpoint = network.localEndpoint();
-    if (!endpoint.empty() &&
-        endpoint.find("0.0.0.0:") == std::string::npos &&
-        endpoint.find("[::]:") == std::string::npos) {
+    if (const std::string endpoint = network.localEndpoint(); !endpoint.empty() &&
+                                                              endpoint.find("0.0.0.0:") == std::string::npos &&
+                                                              endpoint.find("[::]:") == std::string::npos) {
         endpoints.push_back(endpoint);
     }
 

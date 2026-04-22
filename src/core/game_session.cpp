@@ -177,7 +177,7 @@ const SessionRules& GameSession::rules() const {
 }
 
 void GameSession::setRules(SessionRules rules) {
-    rules_ = sanitizeRules(std::move(rules));
+    rules_ = sanitizeRules(rules);
 }
 
 const std::string& GameSession::saves_dir() const {
