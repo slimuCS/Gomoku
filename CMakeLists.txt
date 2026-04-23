@@ -57,6 +57,24 @@ if(WIN32)
     target_link_libraries(Gomoku_Project PRIVATE ws2_32)
 endif()
 
+# ── GUI executable (browser-based, no ftxui dependency) ──────────────────────
+add_executable(Gomoku_GUI
+        src/app/gui_main.cpp
+        src/gui/http_server.cpp
+        src/ai/ai_player.cpp
+        src/core/game_session.cpp
+)
+
+target_include_directories(Gomoku_GUI PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
+target_compile_definitions(Gomoku_GUI PRIVATE
+        GOMOKU_SOURCE_DIR="${CMAKE_CURRENT_SOURCE_DIR}"
+)
+target_link_libraries(Gomoku_GUI PRIVATE gomoku_core)
+
+if(WIN32)
+    target_link_libraries(Gomoku_GUI PRIVATE ws2_32)
+endif()
+
 enable_testing()
 
 if(EXISTS ${CMAKE_CURRENT_SOURCE_DIR}/tests/regression_tests.cpp)
