@@ -3,6 +3,7 @@
 #include <array>
 #include <charconv>
 #include <cstring>
+#include <filesystem>
 #include <iostream>
 #include <sstream>
 #include <string>
@@ -28,6 +29,8 @@ static void closeSocket(SocketHandle s) { close(s); }
 #endif
 
 namespace gomoku::gui {
+
+// ── helpers ───────────────────────────────────────────────────────────────────
 
 static bool parseInt(const std::string& s, int& out) {
     auto [p, ec] = std::from_chars(s.data(), s.data() + s.size(), out);
@@ -60,6 +63,20 @@ static std::string formValue(const std::string& body, const std::string& key) {
     return urlDecode(end == std::string::npos ? body.substr(pos) : body.substr(pos, end - pos));
 }
 
+static std::string jsonEscape(const std::string& s) {
+    std::string out;
+    for (char c : s) {
+        if (c == '"')  out += "\\\"";
+        else if (c == '\\') out += "\\\\";
+        else if (c == '\n') out += "\\n";
+        else if (c == '\r') out += "\\r";
+        else out += c;
+    }
+    return out;
+}
+
+// ── state JSON ────────────────────────────────────────────────────────────────
+
 std::string HttpServer::stateJson() const {
     const Board& b = session_->board();
     const int sz = b.getSize();
@@ -69,7 +86,7 @@ std::string HttpServer::stateJson() const {
     o << "{";
     o << "\"size\":" << sz << ",";
     o << "\"board\":[";
-    for (int y = 0; y < sz; ++y) {
+    for (int y = 0; y < sz; ++y)
         for (int x = 0; x < sz; ++x) {
             if (x || y) o << ',';
             switch (b.getStone(x, y)) {
@@ -78,10 +95,8 @@ std::string HttpServer::stateJson() const {
                 default:          o << '0'; break;
             }
         }
-    }
     o << "],";
-    o << "\"current\":";
-    o << (b.getCurrentPlayer() == Stone::BLACK ? "\"black\"" : "\"white\"") << ',';
+    o << "\"current\":" << (b.getCurrentPlayer() == Stone::BLACK ? "\"black\"" : "\"white\"") << ',';
     o << "\"status\":";
     switch (session_->status()) {
         case GameStatus::BLACK_WIN: o << "\"black_win\""; break;
@@ -90,25 +105,54 @@ std::string HttpServer::stateJson() const {
         default:                    o << "\"playing\"";   break;
     }
     o << ',';
-    o << "\"mode\":";
-    o << (session_->mode() == SessionMode::PVE ? "\"pve\"" : "\"pvp\"") << ',';
-
+    o << "\"mode\":" << (session_->mode() == SessionMode::PVE ? "\"pve\"" : "\"pvp\"") << ',';
     auto lm = session_->last_move();
     if (lm) o << "\"last\":{\"x\":" << lm->first << ",\"y\":" << lm->second << "},";
     else     o << "\"last\":null,";
-
     o << "\"move_count\":" << session_->move_history().size() << ',';
-
     o << "\"rules\":{"
-      << "\"undo_enabled\":" << (rules.undo_enabled ? "true" : "false") << ","
+      << "\"undo_enabled\":"  << (rules.undo_enabled  ? "true" : "false") << ","
       << "\"timer_enabled\":" << (rules.timer_enabled ? "true" : "false") << ","
       << "\"timer_seconds\":" << rules.timer_seconds
       << "},";
-
     o << "\"pending_size\":" << pending_board_size_;
     o << "}";
     return o.str();
 }
+
+// ── saves list JSON ───────────────────────────────────────────────────────────
+
+std::string HttpServer::savesJson() const {
+    namespace fs = std::filesystem;
+    std::ostringstream o;
+    o << "{\"saves\":[";
+
+    const std::string saves_dir = session_->saves_dir();
+    std::vector<fs::path> files;
+    std::error_code ec;
+    for (fs::directory_iterator it(saves_dir, ec), end; !ec && it != end; it.increment(ec))
+        if (it->path().extension() == ".gomoku")
+            files.push_back(it->path());
+
+    std::ranges::sort(files, std::greater<>());
+
+    bool first = true;
+    for (const auto& p : files) {
+        auto info = GameSession::peekSaveFile(p.string());
+        if (!first) o << ',';
+        first = false;
+        o << "{"
+          << "\"path\":\"" << jsonEscape(p.string()) << "\","
+          << "\"filename\":\"" << jsonEscape(info.filename) << "\","
+          << "\"mode\":\"" << jsonEscape(info.mode) << "\","
+          << "\"status\":\"" << jsonEscape(info.status) << "\""
+          << "}";
+    }
+    o << "]}";
+    return o.str();
+}
+
+// ── HTTP responses ────────────────────────────────────────────────────────────
 
 std::string HttpServer::response200(const std::string& ct, const std::string& body) {
     std::ostringstream o;
@@ -122,7 +166,7 @@ std::string HttpServer::response200(const std::string& ct, const std::string& bo
 }
 
 std::string HttpServer::response400(const std::string& msg) {
-    std::string body = "{\"error\":\"" + msg + "\"}";
+    std::string body = "{\"error\":\"" + jsonEscape(msg) + "\"}";
     std::ostringstream o;
     o << "HTTP/1.1 400 Bad Request\r\n"
       << "Content-Type: application/json\r\n"
@@ -133,6 +177,8 @@ std::string HttpServer::response400(const std::string& msg) {
     return o.str();
 }
 
+// ── request dispatcher ────────────────────────────────────────────────────────
+
 std::string HttpServer::handleRequest(const std::string& method,
                                       const std::string& path,
                                       const std::string& body) {
@@ -141,6 +187,9 @@ std::string HttpServer::handleRequest(const std::string& method,
 
     if (path == "/api/state")
         return response200("application/json", stateJson());
+
+    if (path == "/api/saves")
+        return response200("application/json", savesJson());
 
     if (path == "/api/move" && method == "POST") {
         if (session_->status() != GameStatus::PLAYING)
@@ -160,13 +209,11 @@ std::string HttpServer::handleRequest(const std::string& method,
         auto size_str = formValue(body, "size");
         int sz = pending_board_size_;
         if (!size_str.empty()) parseInt(size_str, sz);
-        if (sz < 9) sz = 9;
-        if (sz > 19) sz = 19;
+        sz = std::clamp(sz, 9, 19);
         pending_board_size_ = sz;
 
         SessionMode mode = (mode_str == "pve") ? SessionMode::PVE : SessionMode::PVP;
         SessionRules prev_rules = session_->rules();
-
         session_ = std::make_unique<GameSession>(sz);
         session_->setRules(prev_rules);
         session_->start(mode);
@@ -197,8 +244,8 @@ std::string HttpServer::handleRequest(const std::string& method,
     if (path == "/api/undo" && method == "POST") {
         if (!session_->rules().undo_enabled)
             return response400("undo_disabled");
+        // GameSession::undo() already handles PvE double-undo internally
         session_->undo();
-        if (session_->mode() == SessionMode::PVE) session_->undo();
         return response200("application/json", stateJson());
     }
 
@@ -210,11 +257,34 @@ std::string HttpServer::handleRequest(const std::string& method,
         return response200("application/json", stateJson());
     }
 
+    if (path == "/api/save" && method == "POST") {
+        std::string saved_path = session_->serialize();
+        if (saved_path.empty())
+            return response400(session_->last_persistence_error());
+        namespace fs = std::filesystem;
+        std::string filename = fs::path(saved_path).stem().string();
+        return response200("application/json",
+            "{\"ok\":true,\"filename\":\"" + jsonEscape(filename) + "\"}");
+    }
+
+    if (path == "/api/load" && method == "POST") {
+        std::string file_path = formValue(body, "path");
+        if (file_path.empty())
+            return response400("missing path");
+        if (!session_->deserialize(file_path))
+            return response400(session_->last_persistence_error());
+        // sync pending size with loaded board
+        pending_board_size_ = session_->board().getSize();
+        return response200("application/json", stateJson());
+    }
+
     if (method == "OPTIONS")
         return "HTTP/1.1 204 No Content\r\nAccess-Control-Allow-Origin: *\r\nAccess-Control-Allow-Methods: GET,POST\r\nContent-Length: 0\r\nConnection: close\r\n\r\n";
 
     return "HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\nConnection: close\r\n\r\n";
 }
+
+// ── server loop ───────────────────────────────────────────────────────────────
 
 HttpServer::HttpServer() : session_(std::make_unique<GameSession>(15)) {
     session_->start(SessionMode::PVP);
@@ -310,8 +380,11 @@ void HttpServer::run(std::uint16_t port) {
     closeSocket(server);
 }
 
+// ── embedded HTML/JS ──────────────────────────────────────────────────────────
+
 std::string HttpServer::htmlPage() {
-    return R"html(<!DOCTYPE html>
+    // Split into two raw literals to stay under MSVC's 64KB string limit.
+    static const std::string part1 = R"html(<!DOCTYPE html>
 <html lang="en">
 <head>
 <meta charset="UTF-8">
@@ -336,10 +409,10 @@ canvas {
   flex-shrink: 0;
 }
 #panel {
-  width: 210px;
+  width: 220px;
   display: flex;
   flex-direction: column;
-  gap: 12px;
+  gap: 10px;
   padding-top: 4px;
 }
 h1 { font-size: 1.4rem; letter-spacing: 3px; color: #f0c040; }
@@ -349,7 +422,7 @@ h1 { font-size: 1.4rem; letter-spacing: 3px; color: #f0c040; }
   padding: 12px 14px;
 }
 .card-title {
-  font-size: 0.7rem;
+  font-size: 0.68rem;
   text-transform: uppercase;
   letter-spacing: 1.5px;
   color: #7a8aa0;
@@ -358,10 +431,10 @@ h1 { font-size: 1.4rem; letter-spacing: 3px; color: #f0c040; }
 #turn-indicator { display: flex; align-items: center; gap: 8px; }
 #turn-stone { width: 22px; height: 22px; border-radius: 50%; border: 2px solid #444; flex-shrink: 0; }
 #turn-name { font-weight: 600; font-size: 1rem; }
-#mode-text { font-size: 0.85rem; color: #aaa; }
+#mode-text { font-size: 0.83rem; color: #aaa; margin-top: 5px; }
 #timer-bar { width: 100%; height: 4px; background: #0d1b2e; border-radius: 2px; margin-top: 8px; overflow: hidden; }
 #timer-fill { height: 100%; width: 100%; background: #3a86ff; transition: width 0.9s linear, background 0.3s; border-radius: 2px; }
-#timer-text { font-size: 0.8rem; color: #aaa; margin-top: 4px; }
+#timer-text { font-size: 0.78rem; color: #888; margin-top: 3px; }
 #result-banner {
   display: none; background: #f0c040; color: #1a1a2e;
   border-radius: 8px; padding: 10px; font-weight: 700;
@@ -370,30 +443,29 @@ h1 { font-size: 1.4rem; letter-spacing: 3px; color: #f0c040; }
 .btn {
   width: 100%; padding: 9px; border: none; border-radius: 6px;
   font-size: 0.82rem; font-weight: 600; cursor: pointer;
-  transition: filter 0.15s; letter-spacing: 0.3px;
+  transition: filter 0.15s;
 }
 .btn:hover { filter: brightness(1.15); }
-.btn-pvp  { background: #e07b39; color: #fff; }
-.btn-pve  { background: #3a86ff; color: #fff; }
-.btn-undo { background: #2d2d44; color: #ccc; border: 1px solid #444; }
-.row { display: flex; gap: 8px; }
+.btn-pvp   { background: #e07b39; color: #fff; }
+.btn-pve   { background: #3a86ff; color: #fff; }
+.btn-undo  { background: #2d2d44; color: #ccc; border: 1px solid #3a3a55; }
+.btn-save  { background: #2d4a2d; color: #8fbc8f; border: 1px solid #3a6a3a; }
+.btn-ghost { background: transparent; color: #6a8caf; border: 1px solid #2a3a50; font-size: 0.78rem; padding: 7px; }
+.btn-ghost:hover { background: #1e2e44; filter: none; }
+.row { display: flex; gap: 7px; }
 .row .btn { flex: 1; }
-.size-btns { display: flex; gap: 6px; flex-wrap: wrap; }
+.size-btns { display: flex; gap: 5px; }
 .size-btn {
-  flex: 1; padding: 6px 4px; border: 1px solid #334; border-radius: 5px;
-  background: #0d1b2e; color: #aaa; font-size: 0.78rem; cursor: pointer;
-  transition: all 0.15s;
+  flex: 1; padding: 5px 3px; border: 1px solid #2a3a50; border-radius: 5px;
+  background: #0d1b2e; color: #aaa; font-size: 0.76rem; cursor: pointer; transition: all 0.15s;
 }
 .size-btn.active { background: #3a86ff; color: #fff; border-color: #3a86ff; }
-.size-btn:hover { border-color: #3a86ff; color: #eee; }
-.toggle-row {
-  display: flex; justify-content: space-between; align-items: center;
-  padding: 2px 0;
-}
-.toggle-label { font-size: 0.85rem; color: #ccc; }
+.size-btn:hover:not(.active) { border-color: #3a86ff; color: #eee; }
+.toggle-row { display: flex; justify-content: space-between; align-items: center; padding: 3px 0; }
+.toggle-label { font-size: 0.84rem; color: #ccc; }
 .toggle {
   position: relative; width: 38px; height: 20px; cursor: pointer;
-  background: #334; border-radius: 10px; transition: background 0.2s;
+  background: #2a3a50; border-radius: 10px; transition: background 0.2s; flex-shrink: 0;
 }
 .toggle.on { background: #3a86ff; }
 .toggle::after {
@@ -401,13 +473,30 @@ h1 { font-size: 1.4rem; letter-spacing: 3px; color: #f0c040; }
   background: #fff; border-radius: 50%; top: 3px; left: 3px; transition: left 0.2s;
 }
 .toggle.on::after { left: 21px; }
-.secs-row { display: flex; align-items: center; gap: 6px; margin-top: 8px; }
-.secs-row label { font-size: 0.8rem; color: #888; flex-shrink: 0; }
+.secs-row { display: flex; align-items: center; gap: 6px; margin-top: 6px; }
+.secs-row label { font-size: 0.78rem; color: #888; }
 .secs-input {
-  width: 52px; padding: 4px 6px; border-radius: 4px; border: 1px solid #334;
-  background: #0d1b2e; color: #eee; font-size: 0.85rem; text-align: center;
+  width: 52px; padding: 4px 6px; border-radius: 4px; border: 1px solid #2a3a50;
+  background: #0d1b2e; color: #eee; font-size: 0.84rem; text-align: center;
 }
 .secs-input:focus { outline: none; border-color: #3a86ff; }
+.save-list {
+  max-height: 160px; overflow-y: auto; display: flex; flex-direction: column; gap: 3px;
+  margin-bottom: 7px;
+}
+.save-list::-webkit-scrollbar { width: 4px; }
+.save-list::-webkit-scrollbar-track { background: #0d1b2e; }
+.save-list::-webkit-scrollbar-thumb { background: #2a3a50; border-radius: 2px; }
+.save-item {
+  padding: 6px 8px; border-radius: 5px; cursor: pointer; border: 1px solid transparent;
+  background: #0d1b2e; transition: all 0.12s;
+}
+.save-item:hover { border-color: #3a86ff; }
+.save-item.selected { border-color: #3a86ff; background: #1a2d44; }
+.save-name { font-size: 0.78rem; color: #ccc; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.save-meta { font-size: 0.68rem; color: #5a7a9a; margin-top: 2px; }
+.save-empty { font-size: 0.8rem; color: #444; text-align: center; padding: 12px 0; }
+#save-msg { font-size: 0.75rem; min-height: 18px; margin-top: 4px; text-align: center; }
 </style>
 </head>
 <body>
@@ -415,13 +504,13 @@ h1 { font-size: 1.4rem; letter-spacing: 3px; color: #f0c040; }
 <div id="panel">
   <h1>GOMOKU</h1>
 
-  <div class="card" id="status-card">
+  <div class="card">
     <div class="card-title">Status</div>
     <div id="turn-indicator">
       <div id="turn-stone"></div>
       <span id="turn-name">Black</span>
     </div>
-    <div id="mode-text" style="margin-top:6px">PvP</div>
+    <div id="mode-text">PvP</div>
     <div id="timer-bar"><div id="timer-fill"></div></div>
     <div id="timer-text"></div>
   </div>
@@ -431,8 +520,8 @@ h1 { font-size: 1.4rem; letter-spacing: 3px; color: #f0c040; }
   <div class="card">
     <div class="card-title">New Game</div>
     <div class="row">
-      <button class="btn btn-pvp"  onclick="startGame('pvp')">PvP</button>
-      <button class="btn btn-pve"  onclick="startGame('pve')">PvE</button>
+      <button class="btn btn-pvp" onclick="startGame('pvp')">PvP</button>
+      <button class="btn btn-pve" onclick="startGame('pve')">PvE</button>
     </div>
   </div>
 
@@ -442,11 +531,11 @@ h1 { font-size: 1.4rem; letter-spacing: 3px; color: #f0c040; }
     <div class="card-title">Board Size</div>
     <div class="size-btns">
       <button class="size-btn" data-sz="9"  onclick="setSize(9)">9x9</button>
-      <button class="size-btn" data-sz="13" onclick="setSize(13)">13x13</button>
-      <button class="size-btn active" data-sz="15" onclick="setSize(15)">15x15</button>
+      <button class="size-btn" data-sz="13" onclick="setSize(13)">13</button>
+      <button class="size-btn active" data-sz="15" onclick="setSize(15)">15</button>
       <button class="size-btn" data-sz="19" onclick="setSize(19)">19x19</button>
     </div>
-    <div style="font-size:0.72rem;color:#666;margin-top:6px">Applied on next New Game</div>
+    <div style="font-size:0.7rem;color:#555;margin-top:5px">Applied on next New Game</div>
   </div>
 
   <div class="card">
@@ -455,15 +544,28 @@ h1 { font-size: 1.4rem; letter-spacing: 3px; color: #f0c040; }
       <span class="toggle-label">Undo</span>
       <div class="toggle on" id="toggle-undo" onclick="toggleSetting('undo')"></div>
     </div>
-    <div class="toggle-row" style="margin-top:8px">
+    <div class="toggle-row" style="margin-top:6px">
       <span class="toggle-label">Timer</span>
       <div class="toggle" id="toggle-timer" onclick="toggleSetting('timer')"></div>
     </div>
-    <div class="secs-row" id="secs-row" style="opacity:0.4;pointer-events:none">
+    <div class="secs-row" id="secs-row" style="opacity:0.35;pointer-events:none">
       <label>Seconds:</label>
       <input class="secs-input" id="secs-input" type="number" min="1" max="999" value="20"
              onchange="saveTimerSecs()" oninput="saveTimerSecs()">
     </div>
+  </div>
+
+  <div class="card">
+    <div class="card-title">Save / Load</div>
+    <div class="row" style="margin-bottom:8px">
+      <button class="btn btn-save" onclick="saveGame()">Save Game</button>
+      <button class="btn btn-ghost" onclick="refreshSaves()">Refresh</button>
+    </div>
+    <div class="save-list" id="save-list">
+      <div class="save-empty">Loading...</div>
+    </div>
+    <button class="btn btn-ghost" id="load-btn" onclick="loadSelected()" style="display:none">Load Selected</button>
+    <div id="save-msg"></div>
   </div>
 </div>
 
@@ -478,12 +580,14 @@ let timerInterval = null;
 let timerRemaining = 0;
 let lastMoveCount = -1;
 let pendingSize = 15;
+let selectedSavePath = null;
 
 function cellSize(sz) { return (CANVAS_SIZE - PADDING * 2) / (sz - 1); }
 
 function drawBoard(s) {
   const sz = s.size;
   const cell = cellSize(sz);
+
   const grad = ctx.createLinearGradient(0, 0, CANVAS_SIZE, CANVAS_SIZE);
   grad.addColorStop(0, '#d4a04a');
   grad.addColorStop(1, '#c4902a');
@@ -499,19 +603,13 @@ function drawBoard(s) {
     ctx.beginPath(); ctx.moveTo(PADDING, y); ctx.lineTo(CANVAS_SIZE - PADDING, y); ctx.stroke();
   }
 
-  if (sz === 15) {
-    const stars = [[3,3],[3,11],[11,3],[11,11],[7,7],[3,7],[7,3],[11,7],[7,11]];
+  const starSets = {
+    15: [[3,3],[3,11],[11,3],[11,11],[7,7],[3,7],[7,3],[11,7],[7,11]],
+    19: [[3,3],[3,9],[3,15],[9,3],[9,9],[9,15],[15,3],[15,9],[15,15]]
+  };
+  if (starSets[sz]) {
     ctx.fillStyle = '#8B6914';
-    for (const [sx, sy] of stars) {
-      ctx.beginPath();
-      ctx.arc(PADDING + sx * cell, PADDING + sy * cell, 3.5, 0, Math.PI * 2);
-      ctx.fill();
-    }
-  }
-  if (sz === 19) {
-    const stars = [[3,3],[3,9],[3,15],[9,3],[9,9],[9,15],[15,3],[15,9],[15,15]];
-    ctx.fillStyle = '#8B6914';
-    for (const [sx, sy] of stars) {
+    for (const [sx, sy] of starSets[sz]) {
       ctx.beginPath();
       ctx.arc(PADDING + sx * cell, PADDING + sy * cell, 3.5, 0, Math.PI * 2);
       ctx.fill();
@@ -525,15 +623,10 @@ function drawBoard(s) {
       const cx = PADDING + x * cell;
       const cy = PADDING + y * cell;
       const r = cell * 0.46;
-      if (v === 1) {
-        const g = ctx.createRadialGradient(cx-r*0.3, cy-r*0.3, r*0.05, cx, cy, r);
-        g.addColorStop(0, '#555'); g.addColorStop(1, '#0a0a0a');
-        ctx.fillStyle = g;
-      } else {
-        const g = ctx.createRadialGradient(cx-r*0.3, cy-r*0.3, r*0.05, cx, cy, r);
-        g.addColorStop(0, '#fff'); g.addColorStop(1, '#ccc');
-        ctx.fillStyle = g;
-      }
+      const g = ctx.createRadialGradient(cx-r*0.3, cy-r*0.3, r*0.05, cx, cy, r);
+      if (v === 1) { g.addColorStop(0, '#555'); g.addColorStop(1, '#0a0a0a'); }
+      else         { g.addColorStop(0, '#fff'); g.addColorStop(1, '#ccc'); }
+      ctx.fillStyle = g;
       ctx.beginPath(); ctx.arc(cx, cy, r, 0, Math.PI * 2);
       ctx.shadowColor = 'rgba(0,0,0,0.45)'; ctx.shadowBlur = 6;
       ctx.fill(); ctx.shadowBlur = 0;
@@ -548,7 +641,8 @@ function drawBoard(s) {
   }
 }
 
-function startClientTimer(totalSecs) {
+)html";
+    static const std::string part2 = R"html2(function startClientTimer(totalSecs) {
   clearInterval(timerInterval);
   timerRemaining = totalSecs;
   const fill = document.getElementById('timer-fill');
@@ -562,8 +656,7 @@ function startClientTimer(totalSecs) {
       fetch('/api/timeout', { method: 'POST' }).then(fetchState);
       return;
     }
-    const pct = (timerRemaining / totalSecs) * 100;
-    fill.style.width = pct + '%';
+    fill.style.width = (timerRemaining / totalSecs * 100) + '%';
     fill.style.background = timerRemaining <= 5 ? '#e63946' : '#3a86ff';
     txt.textContent = timerRemaining + 's remaining';
     timerRemaining--;
@@ -581,21 +674,19 @@ function stopClientTimer() {
 function updatePanel(s) {
   const turnStone = document.getElementById('turn-stone');
   const turnName  = document.getElementById('turn-name');
-  const modeText  = document.getElementById('mode-text');
   const banner    = document.getElementById('result-banner');
 
-  modeText.textContent = s.mode === 'pve' ? 'PvE  (you = Black)' : 'PvP';
+  document.getElementById('mode-text').textContent =
+    s.mode === 'pve' ? 'PvE  (you = Black)' : 'PvP';
 
   if (s.status === 'playing') {
     banner.style.display = 'none';
     turnStone.style.background = s.current === 'black' ? '#111' : '#eee';
     turnName.textContent = s.current === 'black' ? 'Black' : 'White';
-    if (s.rules.timer_enabled) {
-      if (s.move_count !== lastMoveCount) {
-        lastMoveCount = s.move_count;
-        startClientTimer(s.rules.timer_seconds);
-      }
-    } else {
+    if (s.rules.timer_enabled && s.move_count !== lastMoveCount) {
+      lastMoveCount = s.move_count;
+      startClientTimer(s.rules.timer_seconds);
+    } else if (!s.rules.timer_enabled) {
       stopClientTimer();
     }
   } else {
@@ -610,13 +701,13 @@ function updatePanel(s) {
   document.getElementById('toggle-undo').className  = 'toggle ' + (s.rules.undo_enabled  ? 'on' : '');
   document.getElementById('toggle-timer').className = 'toggle ' + (s.rules.timer_enabled ? 'on' : '');
   const secsRow = document.getElementById('secs-row');
-  secsRow.style.opacity = s.rules.timer_enabled ? '1' : '0.4';
+  secsRow.style.opacity = s.rules.timer_enabled ? '1' : '0.35';
   secsRow.style.pointerEvents = s.rules.timer_enabled ? 'auto' : 'none';
   document.getElementById('secs-input').value = s.rules.timer_seconds;
 
-  document.querySelectorAll('.size-btn').forEach(b => {
-    b.classList.toggle('active', parseInt(b.dataset.sz) === s.pending_size);
-  });
+  document.querySelectorAll('.size-btn').forEach(b =>
+    b.classList.toggle('active', parseInt(b.dataset.sz) === s.pending_size)
+  );
 }
 
 async function fetchState() {
@@ -625,9 +716,7 @@ async function fetchState() {
     state = await r.json();
     drawBoard(state);
     updatePanel(state);
-  } catch(e) {
-    console.error('fetchState:', e);
-  }
+  } catch(e) { console.error('fetchState:', e); }
 }
 
 async function startGame(mode) {
@@ -642,7 +731,8 @@ async function startGame(mode) {
 }
 
 async function undo() {
-  await fetch('/api/undo', { method: 'POST' });
+  const r = await fetch('/api/undo', { method: 'POST' });
+  if (!r.ok) { const d = await r.json(); setSaveMsg(d.error || 'Undo failed', '#e63946'); }
   fetchState();
 }
 
@@ -678,6 +768,79 @@ async function saveTimerSecs() {
   });
 }
 
+// ── Save / Load ───────────────────────────────────────────────────────────────
+
+function setSaveMsg(msg, color) {
+  const el = document.getElementById('save-msg');
+  el.textContent = msg;
+  el.style.color = color || '#8fbc8f';
+  setTimeout(() => { if (el.textContent === msg) el.textContent = ''; }, 3000);
+}
+
+async function saveGame() {
+  const r = await fetch('/api/save', { method: 'POST' });
+  const d = await r.json();
+  if (d.ok) {
+    setSaveMsg('Saved: ' + d.filename, '#8fbc8f');
+    refreshSaves();
+  } else {
+    setSaveMsg('Save failed: ' + (d.error || '?'), '#e63946');
+  }
+}
+
+async function refreshSaves() {
+  const r = await fetch('/api/saves');
+  const d = await r.json();
+  const list = document.getElementById('save-list');
+  const loadBtn = document.getElementById('load-btn');
+
+  if (!d.saves || d.saves.length === 0) {
+    list.innerHTML = '<div class="save-empty">No save files found</div>';
+    loadBtn.style.display = 'none';
+    return;
+  }
+
+  list.innerHTML = '';
+  for (const s of d.saves) {
+    const item = document.createElement('div');
+    item.className = 'save-item' + (s.path === selectedSavePath ? ' selected' : '');
+    item.innerHTML =
+      '<div class="save-name">' + s.filename + '</div>' +
+      '<div class="save-meta">' + s.mode + '  |  ' + s.status + '</div>';
+    item.onclick = () => {
+      selectedSavePath = s.path;
+      document.querySelectorAll('.save-item').forEach(el => el.classList.remove('selected'));
+      item.classList.add('selected');
+      loadBtn.style.display = 'block';
+    };
+    list.appendChild(item);
+  }
+  if (selectedSavePath && d.saves.some(s => s.path === selectedSavePath)) {
+    loadBtn.style.display = 'block';
+  }
+}
+
+async function loadSelected() {
+  if (!selectedSavePath) return;
+  const r = await fetch('/api/load', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/x-www-form-urlencoded'},
+    body: 'path=' + encodeURIComponent(selectedSavePath)
+  });
+  if (r.ok) {
+    const d = await r.json();
+    state = d;
+    lastMoveCount = -1;
+    clearInterval(timerInterval);
+    drawBoard(state);
+    updatePanel(state);
+    setSaveMsg('Loaded successfully', '#8fbc8f');
+  } else {
+    const d = await r.json();
+    setSaveMsg('Load failed: ' + (d.error || '?'), '#e63946');
+  }
+}
+
 canvas.addEventListener('click', async (e) => {
   if (!state || state.status !== 'playing') return;
   if (state.mode === 'pve' && state.current !== 'black') return;
@@ -700,10 +863,12 @@ canvas.addEventListener('click', async (e) => {
 
 setInterval(fetchState, 500);
 fetchState();
+refreshSaves();
 </script>
 </body>
 </html>
-)html";
+)html2";
+    return part1 + part2;
 }
 
 } // namespace gomoku::gui

@@ -15,6 +15,7 @@ private:
     int pending_board_size_ = 15;  // applied on next New Game
 
     std::string stateJson() const;
+    std::string savesJson() const;
     std::string handleRequest(const std::string& method,
                               const std::string& path,
                               const std::string& body);
